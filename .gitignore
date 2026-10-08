@@ -1,0 +1,29 @@
+# Scope capture data: keep measurements out of the repository
+*.tss
+*.wfm
+*.set
+tss_corrections.txt
+_testdata/
+testdata/
+data/
+
+# Exports from the app
+tss-view*.png
+
+# Local tooling
+.claude/
+.vscode/
+.idea/
+*.code-workspace
+node_modules/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+*~
+*.swp

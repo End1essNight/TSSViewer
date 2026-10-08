@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TSS Viewer</title>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header class="toolbar">
+    <div class="brand">TSS Viewer</div>
+
+    <div class="group">
+      <label class="btn primary" title="Open one or more .tss files (tss_corrections.txt is also accepted)">
+        Open files<input id="pickFiles" type="file" accept=".tss,.txt" multiple hidden>
+      </label>
+      <label class="btn" title="Open a folder: every .tss below it is listed, load them by clicking">
+        Open folder<input id="pickFolder" type="file" webkitdirectory multiple hidden>
+      </label>
+    </div>
+
+    <div class="group">
+      <span class="lbl">Mouse</span>
+      <div class="seg" id="modeSeg">
+        <button data-v="pan" class="on" title="Drag a waveform to shift it, drag background to pan (Shift+drag box-zooms)">Pan / shift</button>
+        <button data-v="zoom" title="Drag a box to zoom (Z)">Box zoom</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <span class="lbl">Dragging moves</span>
+      <div class="seg" id="moveSeg">
+        <button data-v="trace" class="on" title="Only the waveform you grab moves">Waveform</button>
+        <button data-v="file" title="Every waveform from the same file moves together">Whole file</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <span class="lbl">Panes</span>
+      <select id="groupBy" title="How waveforms are split into stacked panes">
+        <option value="label">One per channel</option>
+        <option value="file">One per file</option>
+        <option value="frame">One per frame</option>
+        <option value="single">Single pane</option>
+      </select>
+    </div>
+
+    <div class="group">
+      <button class="btn" id="btnMath" title="Add math channels: A/B, A×B, integral, derivative, any formula">ƒ Math</button>
+      <button class="btn" id="btnCursors" title="Toggle time cursors A/B (C)">Cursors</button>
+      <button class="btn" id="btnFit" title="Fit all waveforms (F, or double-click the plot)">Fit</button>
+      <button class="btn" id="btnResetShifts" title="Set every time shift back to zero">Reset shifts</button>
+      <button class="btn" id="btnPng" title="Save the plot as a PNG image">PNG</button>
+    </div>
+
+    <div class="group end">
+      <button class="btn icon" id="btnTheme" title="Toggle light/dark theme">◐</button>
+      <button class="btn icon" id="btnHelp" title="Mouse and keyboard help">?</button>
+    </div>
+  </header>
+
+  <main>
+    <aside id="sidebar">
+      <div id="files"></div>
+    </aside>
+
+    <section id="plotWrap">
+      <div id="plotHost"><canvas id="plot"></canvas></div>
+      <div id="empty" class="empty">
+        <div class="empty-box">
+          <h2>No files open</h2>
+          <p>Use <b>Open files</b> or <b>Open folder</b> to load .tss captures. Files are read locally in your browser and never uploaded.</p>
+        </div>
+      </div>
+      <div class="status" id="status">Drag a waveform to shift it in time · drag background to pan · wheel to zoom time · Shift+wheel to zoom Y · double-click to fit</div>
+    </section>
+
+    <aside id="tracePanel">
+      <div id="cursorBox" hidden></div>
+      <div id="traces"></div>
+    </aside>
+  </main>
+
+
+  <dialog id="help">
+    <h3>Using TSS Viewer</h3>
+    <table>
+      <tr><th>Drag a waveform</th><td>Shift it along the time axis (or the whole file, see <i>Dragging moves</i>)</td></tr>
+      <tr><th>Type a shift</th><td>Use the Δt box of a waveform or the file shift box. Accepts <code>12.5n</code>, <code>-3 us</code>, <code>1e-9</code>, <code>40 samples</code></td></tr>
+      <tr><th>← / →</th><td>Nudge the selected waveform by one sample (Shift: 10 samples, Alt: 1 pixel)</td></tr>
+      <tr><th>Drag background</th><td>Pan time (also Y once the pane's Y range is locked)</td></tr>
+      <tr><th>Wheel</th><td>Zoom time around the mouse</td></tr>
+      <tr><th>Shift+wheel / wheel on Y axis</th><td>Zoom Y of that pane (locks its Y range)</td></tr>
+      <tr><th>Drag Y axis</th><td>Pan Y of that pane</td></tr>
+      <tr><th>Shift+drag, or Box zoom mode</th><td>Zoom to a box (a flat box zooms time only)</td></tr>
+      <tr><th>Double-click / F</th><td>Fit all waveforms and unlock Y ranges</td></tr>
+      <tr><th>C</th><td>Toggle cursors A/B; drag them to measure Δt and Δvalue</td></tr>
+      <tr><th>Z</th><td>Toggle box-zoom mode</td></tr>
+      <tr><th>Frames</th><td>For FastFrame captures type frames like <code>1-5, 8</code> or click the frame buttons</td></tr>
+    </table>
+    <form method="dialog"><button class="btn primary">Close</button></form>
+  </dialog>
+
+  <dialog id="mathDlg">
+    <h3>Math channels</h3>
+    <p class="mnote">A math channel is computed for every loaded file that has its input channels, and appears there as a
+      <b>ƒ</b> channel. Inputs are taken with their own Δt shifts, so deskewing Vd against Is also deskews Vd*Is.</p>
+    <div id="mathList"></div>
+    <form id="mathForm" autocomplete="off">
+      <div class="mgrid">
+        <label for="mExpr">Expression</label>
+        <input id="mExpr" type="text" placeholder="e.g. Vd * Is" spellcheck="false">
+        <label>Quick</label>
+        <div class="mquick">
+          <span class="lbl">A</span><select id="mA"></select>
+          <span class="lbl">B</span><select id="mB"></select>
+          <span class="qbtns">
+            <button type="button" class="btn small" data-q="div">A ÷ B</button>
+            <button type="button" class="btn small" data-q="mul">A × B</button>
+            <button type="button" class="btn small" data-q="add">A + B</button>
+            <button type="button" class="btn small" data-q="sub">A − B</button>
+            <button type="button" class="btn small" data-q="integ">∫A dt</button>
+            <button type="button" class="btn small" data-q="diff">dA/dt</button>
+            <button type="button" class="btn small" data-q="abs">|A|</button>
+          </span>
+        </div>
+        <label for="mName">Name</label>
+        <input id="mName" type="text" placeholder="e.g. P" spellcheck="false">
+        <label for="mUnit">Unit</label>
+        <input id="mUnit" type="text" placeholder="automatic (e.g. V × A → W)" spellcheck="false">
+      </div>
+      <div id="mMsg" class="mmsg"></div>
+      <details class="mhelp">
+        <summary>Expression syntax</summary>
+        <ul>
+          <li>Channels by label (<code>Vd</code>), by scope channel (<code>ch3</code>), or in brackets when the label has other characters (<code>[VGI_S1]</code>, <code>[Vd×Is]</code>). Other math channels can be used too.</li>
+          <li>Operators <code>+ - * / ^</code> and parentheses; numbers may use SI suffixes: <code>2n</code>, <code>10u</code>, <code>1k</code>. <code>t</code> is time in seconds.</li>
+          <li><code>integ(x)</code>: running integral over time from the start of the record. Energy between cursors A and B is the Δ shown for <code>integ(Vd*Is)</code>.</li>
+          <li><code>diff(x)</code>: time derivative, e.g. <code>diff(Is)</code> in A/s. <code>smooth(x, w)</code>: moving average over w samples, or over w seconds when w &lt; 1 (e.g. <code>smooth(diff(Is), 2n)</code>).</li>
+          <li><code>abs sqrt exp ln log10 min(a,b) max(a,b)</code></li>
+        </ul>
+      </details>
+      <div class="mbtns">
+        <button type="button" class="btn" id="mNew">Clear form</button>
+        <span style="flex:1"></span>
+        <button type="button" class="btn" id="mClose">Close</button>
+        <button type="submit" class="btn primary" id="mSave">Add</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="js/zip.js"></script>
+  <script src="js/wfm.js"></script>
+  <script src="js/tss.js"></script>
+  <script src="js/units.js"></script>
+  <script src="js/series.js"></script>
+  <script src="js/plot.js"></script>
+  <script src="js/math.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
