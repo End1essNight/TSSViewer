@@ -249,5 +249,5 @@ const MathExpr = (() => {
   /** Expression-safe reference to a channel name. */
   const ref = (name) => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && name !== 't' ? name : `[${name}]`);
 
-  return { parse, refs, evaluate, ref, FUNCS };
+  return { parse, refs, evaluate, ref, umul, FUNCS };
 })();

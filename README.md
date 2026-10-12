@@ -116,6 +116,11 @@ If the repository is private, Pages availability depends on your GitHub plan.
   - A definition applies to every loaded file that has its input channels, and is remembered between sessions.
   - Units are inferred (V×A → W, ∫W dt → J, A/s, Ω).
   - Inputs use their own Δt shifts, so deskewing an input also updates the result.
+- **Frame trends** (*Trends* or `T`): measure a channel in a time window on every FastFrame frame and plot the result against frame number or trigger time.
+  - Measurements: mean, integral, RMS, min, max, peak-peak, or the value at one time. Math channels work too, e.g. the integral of `Vd*Is` for energy per pulse.
+  - Type the window (`200n` to `500n`) or click *From cursors*. The window is in displayed time, so a waveform's Δt shift moves it relative to the window; the window being edited is shaded on the plot.
+  - Every loaded file with that channel gets its own line. Hover to read one frame's values in the table; click a point to show that frame (Shift+click adds it).
+  - *CSV* saves every value. Measurements are remembered between sessions.
 - **Measure:** `C` shows cursors A/B with Δt and each waveform's values at A and B. The legend shows each waveform's value at the mouse.
 - *PNG* saves the plot; *Scope screenshot* opens the screenshot stored in the capture.
 
@@ -131,5 +136,6 @@ edit the files and reload the page. Load order is set in `index.html`.
 | `js/tss.js` | `.tss` reader: channel labels from the nested `.set`, corrections, lazy channel decode |
 | `js/series.js` | One frame of one channel, with a min/max pyramid for fast drawing of long records |
 | `js/math.js` | Math expression parser and vectorised evaluator (integ, diff, smooth, …) with unit inference |
+| `js/trend.js` | Frame trends: per-frame window measurements (mean, integral, …) and their chart |
 | `js/plot.js` | Canvas plot: stacked panes, zoom/pan, drag-to-shift, cursors |
 | `js/app.js` | UI: files, channels, frames, waveform list, shifts |

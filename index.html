@@ -47,6 +47,7 @@
 
     <div class="group">
       <button class="btn" id="btnMath" title="Add math channels: A/B, A×B, integral, derivative, any formula">ƒ Math</button>
+      <button class="btn" id="btnTrend" title="Frame trends: measure a channel in a time window on every frame and plot it against the frame (T)">Trends</button>
       <button class="btn" id="btnCursors" title="Toggle time cursors A/B (C)">Cursors</button>
       <button class="btn" id="btnFit" title="Fit all waveforms (F, or double-click the plot)">Fit</button>
       <button class="btn" id="btnResetShifts" title="Set every time shift back to zero">Reset shifts</button>
@@ -72,6 +73,29 @@
           <p>Use <b>Open files</b> or <b>Open folder</b> to load .tss captures. Files are read locally in your browser and never uploaded.</p>
         </div>
       </div>
+      <section id="trendPanel" hidden>
+        <div id="trendSplit" title="Drag to resize"></div>
+        <form id="trendForm" class="trend-bar" autocomplete="off">
+          <b>Frame trends</b>
+          <select id="tStat" title="What to measure in the window, on every frame"></select>
+          <span class="lbl">of</span><select id="tCh" title="Channel (math channels too)"></select>
+          <span class="lbl" id="tALbl">from</span><input id="tA" type="text" spellcheck="false" title="Window start, in displayed time, e.g. 120n, 1.5us">
+          <span class="lbl tB">to</span><input id="tB" class="tB" type="text" spellcheck="false" title="Window end, in displayed time">
+          <button type="button" class="btn small" id="tCur" title="Use the times of cursors A and B as the window">From cursors</button>
+          <button type="submit" class="btn small primary" id="tAdd">Add</button>
+          <button type="button" class="btn small" id="tUpd" hidden title="Apply the form to the selected measurement">Update</button>
+          <span class="spacer"></span>
+          <span class="lbl">X axis</span>
+          <select id="tX"><option value="frame">Frame number</option><option value="time">Trigger time</option></select>
+          <button type="button" class="btn small" id="tCsv" title="Save every measured value as a CSV file">CSV</button>
+          <button type="button" class="xbtn" id="tClose" title="Close frame trends">×</button>
+        </form>
+        <div id="trendList"></div>
+        <div class="trend-body">
+          <div id="trendHost"><canvas id="trendPlot"></canvas></div>
+          <div id="trendTable"></div>
+        </div>
+      </section>
       <div class="status" id="status">Drag a waveform to shift it in time · drag background to pan · wheel to zoom time · Shift+wheel to zoom Y · double-click to fit</div>
     </section>
 
@@ -95,6 +119,7 @@
       <tr><th>Shift+drag, or Box zoom mode</th><td>Zoom to a box (a flat box zooms time only)</td></tr>
       <tr><th>Double-click / F</th><td>Fit all waveforms and unlock Y ranges</td></tr>
       <tr><th>C</th><td>Toggle cursors A/B; drag them to measure Δt and Δvalue</td></tr>
+      <tr><th>T</th><td>Toggle frame trends: mean, integral, min/max… of a channel in a time window, on every frame. Click a point to show that frame (Shift+click adds it)</td></tr>
       <tr><th>Z</th><td>Toggle box-zoom mode</td></tr>
       <tr><th>Frames</th><td>For FastFrame captures type frames like <code>1-5, 8</code> or click the frame buttons</td></tr>
     </table>
@@ -156,6 +181,7 @@
   <script src="js/series.js"></script>
   <script src="js/plot.js"></script>
   <script src="js/math.js"></script>
+  <script src="js/trend.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

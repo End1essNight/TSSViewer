@@ -19,6 +19,7 @@ class Plot {
     this.x0 = 0; this.x1 = 1e-6;
     this.mode = 'pan';        // 'pan' | 'zoom'
     this.cursors = null;      // {a, b} in seconds
+    this.band = null;         // {a, b} highlighted time window (frame-trend measurement)
     this.hover = null;        // {x, y, t}
     this.drag = null;
     this.minPaneH = 110;
@@ -199,6 +200,7 @@ class Plot {
       const r = p.rect;
       ctx.fillStyle = T.pane;
       ctx.fillRect(r.x, r.y, r.w, r.h);
+      if (this.band) this._drawBand(r);
 
       // grid
       ctx.strokeStyle = T.grid; ctx.lineWidth = 1;
@@ -291,6 +293,16 @@ class Plot {
       ctx.lineTo(x, yBot);
     }
     ctx.stroke();
+  }
+
+  _drawBand(r) {
+    const ctx = this.ctx;
+    const xa = Math.max(r.x, Math.min(r.x + r.w, this.t2x(Math.min(this.band.a, this.band.b))));
+    const xb = Math.max(r.x, Math.min(r.x + r.w, this.t2x(Math.max(this.band.a, this.band.b))));
+    ctx.fillStyle = this.theme.box;
+    ctx.globalAlpha = 0.1; ctx.fillRect(xa, r.y, xb - xa, r.h);
+    ctx.globalAlpha = 0.6; ctx.fillRect(xa, r.y, 1, r.h); ctx.fillRect(xb - 1, r.y, 1, r.h);
+    ctx.globalAlpha = 1;
   }
 
   _drawCursors(top, bottom) {

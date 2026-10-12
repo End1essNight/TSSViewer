@@ -4,11 +4,13 @@
 *.set
 tss_corrections.txt
 _testdata/
+example_data/
 testdata/
 data/
 
 # Exports from the app
 tss-view*.png
+tss-trends*.csv
 
 # Local tooling
 .claude/

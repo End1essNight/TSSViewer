@@ -391,6 +391,7 @@
     $('#empty').hidden = S.files.length > 0;
     renderTraces();
     if (traces.length > 300) status(`${traces.length} waveforms selected; drawing may be slow. Select fewer frames or channels.`, 8000);
+    scheduleTrends();
   }
 
   function traceName(t) {
@@ -413,6 +414,7 @@
     updateShiftInputs();
     scheduleReadouts();
     if (S.maths.length) scheduleMathRefresh();
+    scheduleTrends();
   }
 
   function shiftTrace(t, dt) {
@@ -868,6 +870,272 @@
     }
   });
 
+  // ================================================================ frame trends
+  //
+  // A measurement reduces one channel over a time window to one number per frame (mean, integral,
+  // min, …). Every frame of every loaded file that has the channel is measured, and the numbers are
+  // plotted against the frame number or trigger time. The window is in displayed time, like the
+  // cursors, so each waveform's Δt shift moves it relative to the window.
+
+  const trend = new TrendChart($('#trendPlot'), { onHover: renderTrendTable, onPick: pickTrendPoint });
+  const TR = { list: [], nextId: 1, sel: null, xMode: 'frame', data: [], gen: 0 };
+  const tpanel = $('#trendPanel');
+
+  const trendName = (d) => `${Trend.STATS[d.stat].label} ${d.ch}`;
+  const trendWin = (d) => (d.stat === 'at' ? `@ ${Units.fmt(d.a, 's', 5)}` : `${Units.fmt(d.a, 's', 5)} … ${Units.fmt(d.b, 's', 5)}`);
+
+  function saveTrends() {
+    try {
+      localStorage.setItem('tssviewer.trends', JSON.stringify({ xMode: TR.xMode, list: TR.list.map(({ ch, stat, a, b }) => ({ ch, stat, a, b })) }));
+    } catch (_) { /* ignore */ }
+  }
+
+  function loadTrends() {
+    try {
+      const o = JSON.parse(localStorage.getItem('tssviewer.trends') || '{}');
+      if (o.xMode === 'time') TR.xMode = 'time';
+      TR.list = (o.list || []).filter((d) => d && d.ch && d.stat in Trend.STATS && isFinite(d.a) && isFinite(d.b))
+        .map((d) => ({ id: TR.nextId++, ch: d.ch, stat: d.stat, a: d.a, b: d.b }));
+    } catch (_) { /* ignore */ }
+    $('#tX').value = TR.xMode;
+    $('#tStat').innerHTML = Object.entries(Trend.STATS).map(([k, s]) => `<option value="${k}">${esc(s.label)}</option>`).join('');
+    renderTrendList();
+  }
+
+  /** Channel choices: every channel label (math included) of the loaded files. */
+  function fillTrendChannels() {
+    const opts = [];
+    for (const f of S.files) {
+      if (f.status !== 'ready') continue;
+      for (const c of f.cap.channels) if (!opts.includes(c.label)) opts.push(c.label);
+    }
+    const sel = $('#tCh'), html = opts.map((o) => `<option>${esc(o)}</option>`).join('');
+    if (sel.innerHTML === html) return;   // keep an open dropdown undisturbed
+    const prev = sel.value;
+    sel.innerHTML = html;
+    if (opts.includes(prev)) sel.value = prev;
+  }
+
+  let trendTimer = 0;
+  function scheduleTrends() {
+    if (tpanel.hidden) return;
+    clearTimeout(trendTimer);
+    trendTimer = setTimeout(() => { if (plot.drag) scheduleTrends(); else computeTrends(); }, 150);
+  }
+
+  async function computeTrends() {
+    const gen = ++TR.gen;
+    fillTrendChannels();
+    const ready = S.files.filter((f) => f.status === 'ready');
+    const pal = PALETTE[isDark() ? 'dark' : 'light'];
+    const panes = [];
+    for (const d of TR.list) {
+      const pane = { def: d, title: `${trendName(d)}  ${trendWin(d)}`, unit: null, series: [] };
+      for (const [k, rec] of ready.entries()) {
+        const ch = rec.cap.channels.find((c) => c.label === d.ch);
+        if (!ch) continue;
+        try { await loadCh(rec, ch); } catch (_) { continue; }
+        if (gen !== TR.gen) return;   // superseded by a newer request
+        if (!ch.wfm) continue;
+        const w = ch.wfm, nF = w.frameCount, ft = w.frameTimes || rec.cap.info.frameTimes;
+        const xs = new Float64Array(nF), ys = new Float64Array(nF);
+        for (let f = 0; f < nF; f++) {
+          const st = S.ts.get(`${rec.id}|${ch.key}|${f}`);
+          const shift = rec.offset + (st ? st.offset : 0);
+          xs[f] = TR.xMode === 'time' ? ft[f] : f + 1;
+          ys[f] = Trend.measure(seriesFor(ch, f), d.a - shift, d.b - shift, d.stat);
+        }
+        const u = Trend.STATS[d.stat].unit(w.units);
+        pane.unit = pane.unit === null || pane.unit === u ? u : '';
+        pane.series.push({ rec, name: rec.alias, color: pal[k % pal.length], xs, ys });
+      }
+      pane.unit = pane.unit || '';
+      panes.push(pane);
+    }
+    TR.data = panes;
+    const empty = !ready.length ? 'Load .tss files to measure them.' : 'Pick what to measure, a channel and a time window above, then Add.';
+    trend.setData(panes, TR.xMode === 'time' ? 's' : '', empty);
+    renderTrendTable(null);
+  }
+
+  /** Values table next to the chart: at the hovered frame, or averaged over all frames. */
+  function renderTrendTable(x) {
+    const host = $('#trendTable');
+    const panes = TR.data.filter((p) => p.series.length);
+    if (!panes.length) { host.innerHTML = '<div class="hint">Values per file appear here. Hover the chart to read one frame.</div>'; return; }
+    const recs = [];
+    for (const p of panes) for (const s of p.series) if (!recs.includes(s.rec)) recs.push(s.rec);
+    const head = x == null ? 'Mean of frames' : TR.xMode === 'time' ? `t ${Units.fmt(x, 's', 4)}` : `Frame ${x}`;
+    let h = `<table><tr><th>${esc(head)}</th>${panes.map((p) => `<th title="${esc(p.title)}">${esc(trendName(p.def))}</th>`).join('')}</tr>`;
+    for (const rec of recs) {
+      const color = panes.flatMap((p) => p.series).find((s) => s.rec === rec).color;
+      h += `<tr><td title="${esc(rec.path)}"><span class="sw" style="background:${color}"></span>${esc(rec.alias)}</td>`;
+      for (const p of panes) {
+        const s = p.series.find((q) => q.rec === rec);
+        let v = NaN, tip = '';
+        if (s && x == null) {
+          let sum = 0, n = 0;
+          for (const y of s.ys) if (isFinite(y)) { sum += y; n++; }
+          v = n ? sum / n : NaN;
+          tip = `${n} frames`;
+        } else if (s) {
+          const i = Trend.nearest(s.xs, x);
+          v = s.ys[i];
+          tip = `frame ${i + 1}`;
+        }
+        h += `<td title="${esc(tip)}">${s ? esc(Units.fmt(v, p.unit, 4)) : ''}</td>`;
+      }
+      h += '</tr>';
+    }
+    host.innerHTML = h + '</table>';
+  }
+
+  /** Click on a point: show that frame of that file (Shift/Ctrl+click adds it to the selection). */
+  function pickTrendPoint(s, i, e) {
+    const rec = s.rec;
+    if (!S.files.includes(rec)) return;
+    if (e.shiftKey || e.ctrlKey || e.metaKey) rec.selFrames.add(i); else rec.selFrames = new Set([i]);
+    rec.open = true;
+    renderFiles(); rebuild();
+    status(`${rec.alias}: showing frame ${fmtFrames(rec.selFrames)}`);
+  }
+
+  function renderTrendList() {
+    $('#trendList').innerHTML = TR.list.map((d) => `<span class="chip${d.id === TR.sel ? ' on' : ''}" data-id="${d.id}" title="Click to edit it and show its window on the plot">
+      ${esc(trendName(d))} <span class="lbl">${esc(trendWin(d))}</span><button type="button" class="xbtn" data-act="del" title="Remove">×</button></span>`).join('');
+    $('#tAdd').textContent = TR.sel ? 'Add new' : 'Add';
+    $('#tUpd').hidden = !TR.sel;
+  }
+
+  /** Read the form; returns {ch, stat, a, b} or null (bad fields are outlined). */
+  function readTrendForm() {
+    const stat = $('#tStat').value, ch = $('#tCh').value, at = stat === 'at';
+    const sa = $('#tA').value.trim(), sb = $('#tB').value.trim();
+    const a = sa ? Units.parseTime(sa) : NaN, b = at ? a : sb ? Units.parseTime(sb) : NaN;
+    $('#tA').classList.toggle('bad', !isFinite(a));
+    $('#tB').classList.toggle('bad', !at && !isFinite(b));
+    if (!ch || !isFinite(a) || !isFinite(b)) return null;
+    return { ch, stat, a: Math.min(a, b), b: Math.max(a, b) };
+  }
+
+  function writeTrendForm(d) {
+    $('#tStat').value = d.stat;
+    if ([...$('#tCh').options].some((o) => o.value === d.ch)) $('#tCh').value = d.ch;
+    $('#tA').value = Units.fmt(d.a, 's', 6);
+    $('#tB').value = Units.fmt(d.b, 's', 6);
+    syncTrendForm();
+  }
+
+  /** Show the form's window as a band on the waveform plot; hide "to" for single-time stats. */
+  function syncTrendForm() {
+    const at = $('#tStat').value === 'at';
+    document.querySelectorAll('#trendForm .tB').forEach((el) => { el.hidden = at; });
+    $('#tALbl').textContent = at ? 'at' : 'from';
+    const sa = $('#tA').value.trim();
+    const a = sa ? Units.parseTime(sa) : NaN, b = at ? a : Units.parseTime($('#tB').value);
+    plot.band = !tpanel.hidden && isFinite(a) && isFinite(b) ? { a, b } : null;
+    plot.redraw();
+  }
+
+  function setTrendWindowFromCursors() {
+    if (!plot.cursors) plot.setCursors(true);
+    const c = plot.cursors;
+    $('#tA').value = Units.fmt(Math.min(c.a, c.b), 's', 6);
+    $('#tB').value = Units.fmt(Math.max(c.a, c.b), 's', 6);
+    syncTrendForm();
+  }
+
+  function toggleTrends(open = tpanel.hidden) {
+    tpanel.hidden = !open;
+    $('#btnTrend').classList.toggle('on', open);
+    if (open) {
+      fillTrendChannels();
+      if (!$('#tA').value.trim() && S.traces.length) {
+        const c = plot.cursors, w = plot.x1 - plot.x0;
+        const a = c ? Math.min(c.a, c.b) : plot.x0 + w / 3, b = c ? Math.max(c.a, c.b) : plot.x0 + (2 * w) / 3;
+        $('#tA').value = Units.fmt(a, 's', 4); $('#tB').value = Units.fmt(b, 's', 4);
+      }
+      computeTrends();
+    }
+    syncTrendForm();
+  }
+
+  function exportTrendCsv() {
+    const panes = TR.data.filter((p) => p.series.length);
+    if (!panes.length) { status('Nothing to export: add a measurement first'); return; }
+    const q = (v) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+    const recs = [];
+    for (const p of panes) for (const s of p.series) if (!recs.includes(s.rec)) recs.push(s.rec);
+    const cols = [{ name: 'frame', get: (f) => f + 1 }];
+    for (const rec of recs) {
+      const ft = rec.cap.info.frameTimes;
+      cols.push({ name: `${rec.alias} · trigger time [s]`, get: (f) => (f < ft.length ? ft[f] : NaN) });
+    }
+    for (const p of panes) {
+      for (const s of p.series) {
+        cols.push({ name: `${s.name} · ${trendName(p.def)} ${trendWin(p.def)}${p.unit ? ` [${p.unit}]` : ''}`, get: (f) => (f < s.ys.length ? s.ys[f] : NaN) });
+      }
+    }
+    const nF = Math.max(...recs.map((r) => r.cap.info.frameCount));
+    const lines = [cols.map((c) => q(c.name)).join(',')];
+    for (let f = 0; f < nF; f++) lines.push(cols.map((c) => { const v = c.get(f); return isFinite(v) ? String(v) : ''; }).join(','));
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' }));   // BOM: Excel reads µ, Ω
+    a.download = 'tss-trends.csv';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+
+  $('#btnTrend').addEventListener('click', () => toggleTrends());
+  $('#tClose').addEventListener('click', () => toggleTrends(false));
+  $('#tCur').addEventListener('click', setTrendWindowFromCursors);
+  $('#tCsv').addEventListener('click', exportTrendCsv);
+  $('#tX').addEventListener('change', (e) => { TR.xMode = e.target.value; saveTrends(); computeTrends(); });
+  $('#trendForm').addEventListener('input', syncTrendForm);
+  $('#trendForm').addEventListener('change', syncTrendForm);
+
+  $('#trendForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const d = readTrendForm();
+    if (!d) { status('Choose a channel and type a valid window, e.g. from 120n to 1.5u'); return; }
+    TR.list.push({ id: TR.nextId++, ...d });
+    TR.sel = null;
+    renderTrendList(); saveTrends(); computeTrends();
+  });
+
+  $('#tUpd').addEventListener('click', () => {
+    const d = readTrendForm();
+    const def = TR.list.find((x) => x.id === TR.sel);
+    if (!d || !def) return;
+    Object.assign(def, d);
+    renderTrendList(); saveTrends(); computeTrends();
+  });
+
+  $('#trendList').addEventListener('click', (e) => {
+    const chip = e.target.closest('.chip');
+    if (!chip) return;
+    const id = +chip.dataset.id;
+    if (e.target.closest('[data-act=del]')) {
+      TR.list = TR.list.filter((d) => d.id !== id);
+      if (TR.sel === id) TR.sel = null;
+      saveTrends(); computeTrends();
+    } else {
+      TR.sel = TR.sel === id ? null : id;
+      if (TR.sel) writeTrendForm(TR.list.find((d) => d.id === id));
+    }
+    renderTrendList();
+  });
+
+  $('#trendSplit').addEventListener('pointerdown', (e) => {
+    const sy = e.clientY, h0 = tpanel.getBoundingClientRect().height;
+    const max = $('#plotWrap').getBoundingClientRect().height - 80;
+    const move = (ev) => { tpanel.style.height = `${Math.max(160, Math.min(max, h0 - (ev.clientY - sy)))}px`; };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    e.preventDefault();
+  });
+
   // ================================================================ toolbar
 
   function seg(id, onPick) {
@@ -906,13 +1174,14 @@
     document.documentElement.dataset.theme = isDark() ? 'light' : 'dark';
     try { localStorage.setItem('tssviewer.theme', document.documentElement.dataset.theme); } catch (_) { /* ignore */ }
     plot.refreshTheme();
+    trend.refreshTheme();
     rebuild();
   });
   $('#btnHelp').addEventListener('click', () => $('#help').showModal());
 
   try {
     const th = localStorage.getItem('tssviewer.theme');
-    if (th) { document.documentElement.dataset.theme = th; plot.refreshTheme(); }
+    if (th) { document.documentElement.dataset.theme = th; plot.refreshTheme(); trend.refreshTheme(); }
   } catch (_) { /* ignore */ }
 
   document.addEventListener('keydown', (e) => {
@@ -926,6 +1195,7 @@
       shiftTrace(t, e.key === 'ArrowLeft' ? -step : step);
     } else if (e.key === 'f' || e.key === 'F') plot.fitAll();
     else if (e.key === 'c' || e.key === 'C') plot.setCursors(!plot.cursors);
+    else if (e.key === 't' || e.key === 'T') toggleTrends();
     else if (e.key === 'z' || e.key === 'Z') setMode(plot.mode === 'zoom' ? 'pan' : 'zoom');
     else if (e.key === 'Escape') onSelect(null);
   });
@@ -941,6 +1211,7 @@
   }
 
   loadMaths();
+  loadTrends();
   renderFiles();
   renderTraces();
 
