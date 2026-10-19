@@ -11,12 +11,13 @@
     <div class="brand">TSS Viewer</div>
 
     <div class="group">
-      <label class="btn primary" title="Open one or more .tss files (tss_corrections.txt is also accepted)">
-        Open files<input id="pickFiles" type="file" accept=".tss,.txt" multiple hidden>
+      <label class="btn primary" title="Open one or more .tss files. Select their test-condition .json files (and tss_corrections.txt) with them">
+        Open files<input id="pickFiles" type="file" accept=".tss,.json,.txt" multiple hidden>
       </label>
-      <label class="btn" title="Open a folder: every .tss below it is listed, load them by clicking">
+      <label class="btn" title="Open a folder: choose which of its .tss captures to load by their test conditions (.json)">
         Open folder<input id="pickFolder" type="file" webkitdirectory multiple hidden>
       </label>
+      <button class="btn" id="btnCond" title="Choose captures to load by their test conditions, and compare conditions">Conditions</button>
     </div>
 
     <div class="group">
@@ -126,6 +127,27 @@
     <form method="dialog"><button class="btn primary">Close</button></form>
   </dialog>
 
+  <dialog id="condDlg">
+    <h3>Choose files by test conditions</h3>
+    <div class="cdbar">
+      <input type="text" id="cdText" placeholder="Search path or conditions…" spellcheck="false" title="Words to find in the file path or test conditions, e.g. 02016010 Np3000">
+      <button type="button" class="btn small" id="cdClear" title="Show every file again">Clear filters</button>
+      <span class="lbl" id="cdInfo"></span>
+      <span style="flex:1"></span>
+      <label class="lbl"><input type="checkbox" id="cdVary" checked> Only conditions that differ</label>
+    </div>
+    <div id="cdTable"></div>
+    <p class="mnote">1. Narrow the list with the value boxes under each condition. 2. Tick the files to load (click a row, or the box in the header for every file shown). 3. Click <b>Load</b>.
+      Click a condition's name to sort by it. Mark <b>name</b> under conditions to build file names from them.</p>
+    <div class="mbtns">
+      <button type="button" class="btn" id="cdName" title="Name every file from the conditions marked 'name', e.g. high_voltage=600">Name files from marked</button>
+      <button type="button" class="btn" id="cdReset" title="Name every file after its .tss file again">Reset names</button>
+      <span style="flex:1"></span>
+      <button type="button" class="btn" id="cdClose">Close</button>
+      <button type="button" class="btn primary" id="cdLoad">Load ticked files</button>
+    </div>
+  </dialog>
+
   <dialog id="mathDlg">
     <h3>Math channels</h3>
     <p class="mnote">A math channel is computed for every loaded file that has its input channels, and appears there as a
@@ -177,6 +199,7 @@
   <script src="js/zip.js"></script>
   <script src="js/wfm.js"></script>
   <script src="js/tss.js"></script>
+  <script src="js/cond.js"></script>
   <script src="js/units.js"></script>
   <script src="js/series.js"></script>
   <script src="js/plot.js"></script>

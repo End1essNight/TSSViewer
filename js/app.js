@@ -15,9 +15,12 @@
   const dirOf = (path) => { const i = path.lastIndexOf('/'); return i < 0 ? '' : path.slice(0, i); };
 
   const S = {
-    files: [],              // file records, see addEntries()
+    files: [],              // file records in the file list, see addEntries()
+    pool: [],               // captures found by Open folder but not picked yet (see the file picker)
     nextId: 1,
     corrections: new Map(), // folder path -> {oldLabel: newLabel}
+    conds: new Cond.Index(), // test-condition JSON files, matched to captures by folder and name
+    condVary: [],           // condition keys whose values differ between the listed files
     ts: new Map(),          // trace id -> {offset, visible, color}  (survives rebuilds)
     traces: [],
     byId: new Map(),
@@ -83,34 +86,78 @@
 
   // ================================================================ files
 
-  /** items: [{file: File, path: 'folder/sub/name.tss'}] */
-  async function addEntries(items) {
-    const tss = [], txt = [];
+  /**
+   * items: [{file: File, path: 'folder/sub/name.tss'}]. With `pick` (Open folder) several captures
+   * are not loaded straight away: they open in the file picker to be chosen by test conditions.
+   */
+  async function addEntries(items, pick = false) {
+    const tss = [], txt = [], json = [];
     for (const it of items) {
       const n = it.file.name.toLowerCase();
       if (n.endsWith('.tss')) tss.push(it);
       else if (n === 'tss_corrections.txt') txt.push(it);
+      else if (n.endsWith('.json')) json.push(it);
     }
     for (const it of txt) S.corrections.set(dirOf(it.path), Tss.parseCorrections(await it.file.text()));
-    if (!tss.length) { if (!txt.length) status('No .tss files found in the selection'); else status('Channel corrections loaded'); return; }
+    await Promise.all(json.map(readCond));
+    if (!tss.length) {
+      const n = attachConds();
+      renderFiles();
+      if (txt.length) status('Channel corrections loaded');
+      else if (json.length) status(`Read ${json.length} JSON file${json.length > 1 ? 's' : ''}; ${n} listed capture${n === 1 ? ' has' : 's have'} test conditions`);
+      else status('No .tss files found in the selection');
+      return;
+    }
 
     tss.sort((a, b) => Tss.natural(a.path, b.path));
-    const added = [];
+    const added = [], known = allRecs();
     for (const it of tss) {
-      const dup = S.files.some((f) => f.path === it.path && f.blob.size === it.file.size && f.blob.lastModified === it.file.lastModified);
+      const dup = known.some((f) => f.path === it.path && f.blob.size === it.file.size && f.blob.lastModified === it.file.lastModified);
       if (dup) continue;
       const rec = {
         id: S.nextId++, name: it.file.name, alias: stem(it.file.name), path: it.path, dir: dirOf(it.path),
         blob: it.file, cap: null, status: 'idle', error: null,
-        offset: 0, selCh: new Set(), selFrames: new Set([0]), open: false,
+        offset: 0, selCh: new Set(), selFrames: new Set([0]), open: false, cond: null, condOpen: true,
       };
-      S.files.push(rec);
       added.push(rec);
     }
-    if (added.length > AUTO_LOAD_MAX) status(`${added.length} files listed. Click a file to load it.`, 8000);
+    if (pick && added.length > 1) {
+      S.pool.push(...added);
+      attachConds();
+      const n = added.filter((r) => r.cond).length;
+      status(`${added.length} captures found${n ? `, ${n} with test conditions` : ''}. Tick the ones to load.`, 8000);
+      openPicker();
+      return;
+    }
+    S.files.push(...added);
+    attachConds();
+    if (added.length > AUTO_LOAD_MAX) {
+      const n = added.filter((r) => r.cond).length;
+      status(`${added.length} files listed${n ? ` (${n} with test conditions)` : ''}. Click a file to load it.`, 8000);
+    }
     renderFiles();
     rebuild();
     if (added.length <= AUTO_LOAD_MAX) for (const rec of added) await loadFile(rec);
+  }
+
+  /** Read one test-condition JSON file into the index; a bad file is kept with its error. */
+  async function readCond(it) {
+    const e = { name: it.file.name, path: it.path, dir: dirOf(it.path), values: null, error: null };
+    try {
+      if (it.file.size > 1e6) throw new Error('file is too large for a test-condition file');
+      e.values = Cond.parse(await it.file.text());
+    } catch (err) {
+      e.error = err.message || String(err);
+    }
+    S.conds.add(e);
+  }
+
+  /** Pair every capture with its test-condition JSON. Returns how many listed files have one. */
+  function attachConds() {
+    for (const rec of allRecs()) rec.cond = S.conds.match(rec.dir, rec.name);
+    S.condVary = Cond.varying(S.files.filter((f) => f.cond && f.cond.values).map((f) => f.cond.values));
+    if (cdlg.open) renderCondTable();
+    return S.files.filter((f) => f.cond).length;
   }
 
   async function loadFile(rec) {
@@ -132,6 +179,7 @@
       console.error(err);
     }
     renderFiles();
+    if (cdlg.open) renderCondTable();
     if (rec.status === 'ready') await ensureChannels(rec);
   }
 
@@ -150,8 +198,13 @@
 
   const loadCh = (rec, ch) => (ch.math ? computeMath(rec, ch) : rec.cap.loadChannel(ch));
 
+  /** Close a file: it goes back to the picker's candidates, unloaded, so it can be picked again. */
   function removeFile(rec) {
     S.files = S.files.filter((f) => f !== rec);
+    Object.assign(rec, { cap: null, status: 'idle', error: null, offset: 0, selCh: new Set(), selFrames: new Set([0]), open: false });
+    S.pool.push(rec);
+    S.pool.sort((a, b) => Tss.natural(a.path, b.path));
+    attachConds();
     for (const id of [...S.ts.keys()]) if (id.startsWith(`${rec.id}|`)) S.ts.delete(id);
     if (S.selected && S.selected.startsWith(`${rec.id}|`)) S.selected = null;
     renderFiles();
@@ -449,8 +502,12 @@
   function renderFiles() {
     const host = $('#files');
     const ready = S.files.filter((f) => f.status === 'ready');
-    let h = `<div class="section-h"><span>Files (${S.files.length})</span>${S.files.length ? '<button class="btn small" data-act="clear">Close all</button>' : ''}</div>`;
-    if (!S.files.length) {
+    let h = `<div class="section-h"><span>Files (${S.files.length})</span>${S.files.length || S.pool.length ? '<button class="btn small" data-act="clear">Close all</button>' : ''}</div>`;
+    if (S.pool.length) {
+      h += `<div class="pool"><span>${S.pool.length} more capture${S.pool.length > 1 ? 's' : ''} in the opened folder</span>
+        <button class="btn small primary" data-act="pick" title="Choose captures to load by their test conditions">Choose…</button></div>`;
+    }
+    if (!S.files.length && !S.pool.length) {
       h += '<div class="hint">Open .tss files to begin. A <code>tss_corrections.txt</code> selected with them renames channels.</div>';
     }
     if (ready.length > 1) {
@@ -469,17 +526,22 @@
       }
       h += '</div>';
     }
-    if (S.files.length > 6) h += '<input type="text" class="filter" placeholder="Filter files…" spellcheck="false">';
+    const prevFilter = $('#files .filter');
+    if (S.files.length > 6) h += `<input type="text" class="filter" placeholder="Filter files or conditions…" spellcheck="false" title="Words to find in the file path or test conditions, e.g. 600 Np3000" value="${esc(prevFilter ? prevFilter.value : '')}">`;
     for (const rec of S.files) h += fileCard(rec);
+    const refocus = prevFilter && prevFilter === document.activeElement;
     host.innerHTML = h;
+    if (refocus) $('#files .filter').focus();
     applyFilter();
   }
 
   function fileCard(rec) {
-    let h = `<div class="file${rec.status === 'ready' ? '' : ' unloaded'}" data-id="${rec.id}" data-path="${esc(rec.path.toLowerCase())}">
+    const cv = rec.cond && rec.cond.values;
+    const summary = cv ? S.condVary.filter((k) => k in cv && Cond.text(cv[k]).trim()).map((k) => `${k} ${Cond.text(cv[k]).trim()}`).join(' · ') : '';
+    let h = `<div class="file${rec.status === 'ready' ? '' : ' unloaded'}" data-id="${rec.id}" data-search="${esc(searchText(rec))}">
       <div class="fhead" data-act="toggle">
         <span class="caret">${rec.open ? '▼' : '▶'}</span>
-        <span class="fname" title="${esc(rec.path)}">${esc(rec.alias)}${rec.dir ? `<span class="fdir">${esc(rec.dir)}</span>` : ''}</span>
+        <span class="fname" title="${esc(rec.path)}">${esc(rec.alias)}${rec.dir ? `<span class="fdir">${esc(rec.dir)}</span>` : ''}${summary ? `<span class="fcond" title="${esc(summary)}">${esc(summary)}</span>` : ''}</span>
         ${rec.status === 'loading' ? '<span class="lbl">loading…</span>' : ''}
         ${rec.status === 'idle' ? '<button class="btn small" data-act="load">Load</button>' : ''}
         <button class="xbtn" data-act="remove" title="Close this file">×</button>
@@ -516,15 +578,37 @@
         if (rec.cap.png) h += '<div class="row"><button class="btn small" data-act="png">Scope screenshot</button></div>';
       }
       if (rec.status === 'idle') h += '<div class="hint" style="padding:0">Not loaded yet. Click <b>Load</b>.</div>';
+      h += condBlock(rec);
       h += '</div>';
     }
     return h + '</div>';
   }
 
+  /** Lower-case text the filters search: path, display name and every test condition. */
+  function searchText(rec) {
+    const cv = rec.cond && rec.cond.values;
+    return [rec.path, rec.alias, cv ? Object.entries(cv).map(([k, v]) => `${k} ${Cond.text(v)}`).join(' ') : ''].join(' ').toLowerCase();
+  }
+
+  /** The file's test conditions as a key/value table; keys whose value differs between files are marked. */
+  function condBlock(rec) {
+    const c = rec.cond;
+    if (!c) return '';
+    if (c.error) return `<div class="ferr" title="${esc(c.path)}">Test conditions (${esc(c.name)}): ${esc(c.error)}</div>`;
+    const vary = new Set(S.condVary);
+    const rows = Object.entries(c.values).map(([k, v]) => {
+      const t = Cond.text(v).trim();
+      return `<tr${vary.has(k) ? ' class="vary" title="Differs between files"' : ''}><th>${esc(k)}</th><td>${t ? esc(t) : '<span class="lbl">—</span>'}</td></tr>`;
+    }).join('');
+    return `<details class="conds"${rec.condOpen ? ' open' : ''}><summary>Test conditions <span class="lbl" title="${esc(c.path)}">${esc(c.name)}</span></summary>
+      <table>${rows}</table></details>`;
+  }
+
+  /** Every word typed in the filter must appear in the file's path, name or test conditions. */
   function applyFilter() {
     const box = $('#files .filter');
-    const q = (box ? box.value : '').trim().toLowerCase();
-    document.querySelectorAll('#files .file').forEach((el) => { el.hidden = q !== '' && !el.dataset.path.includes(q); });
+    const words = (box ? box.value : '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+    document.querySelectorAll('#files .file').forEach((el) => { el.hidden = !words.every((w) => el.dataset.search.includes(w)); });
   }
 
   const recById = (id) => S.files.find((f) => f.id === +id);
@@ -536,9 +620,11 @@
     const rec = card && recById(card.dataset.id);
     const act = el.dataset.act;
     if (act === 'clear') {
-      S.files = []; S.ts.clear(); S.selected = null;
+      S.files = []; S.pool = []; S.ts.clear(); S.selected = null; S.conds.clear(); S.condVary = [];
+      CD.ticked.clear(); CD.filters.clear();
       renderFiles(); rebuild(); return;
     }
+    if (act === 'pick') { openPicker(); return; }
     if (act === 'allch') {
       const label = el.dataset.ch;
       const ready = S.files.filter((f) => f.status === 'ready' && f.cap.channels.some((c) => c.label === label));
@@ -599,6 +685,12 @@
   });
 
   $('#files').addEventListener('input', (e) => { if (e.target.classList.contains('filter')) applyFilter(); });
+  // 'toggle' does not bubble: listen in the capture phase to remember whether each conditions table is open.
+  $('#files').addEventListener('toggle', (e) => {
+    if (!e.target.classList.contains('conds')) return;
+    const rec = recById(e.target.closest('.file').dataset.id);
+    if (rec) rec.condOpen = e.target.open;
+  }, true);
   $('#files').addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('input[type=text]')) e.target.blur(); });
 
   // ================================================================ rendering: traces
@@ -735,6 +827,187 @@
 
   $('#traces').addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('input[type=text]')) e.target.blur(); });
   $('#cursorBox').addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('input[type=text]')) e.target.blur(); });
+
+  // ================================================================ file picker by test conditions
+  //
+  // One row per capture (listed files and the candidates found by Open folder), one column per
+  // condition key. Filter the rows by condition values, tick the captures to load, then Load.
+  // Marked ("name") columns can also be turned into the files' display names.
+
+  const cdlg = $('#condDlg');
+  const CD = { sort: null, dir: 1, nameKeys: new Set(), filters: new Map(), ticked: new Set() };
+
+  try { CD.nameKeys = new Set(JSON.parse(localStorage.getItem('tssviewer.condName') || '[]')); } catch (_) { /* ignore */ }
+  const saveNameKeys = () => { try { localStorage.setItem('tssviewer.condName', JSON.stringify([...CD.nameKeys])); } catch (_) { /* ignore */ } };
+
+  const allRecs = () => [...S.files, ...S.pool];
+  const condVal = (f, k) => Cond.text(f.cond && f.cond.values ? f.cond.values[k] : undefined).trim();
+  const tickable = (f) => f.status !== 'ready' && f.status !== 'loading';
+
+  function condKeys(recs = allRecs()) {
+    const keys = [];
+    for (const f of recs) if (f.cond && f.cond.values) for (const k of Object.keys(f.cond.values)) if (!keys.includes(k)) keys.push(k);
+    return keys;
+  }
+
+  /** Rows passing the text box and every condition filter except `skip`. */
+  function filteredRecs(skip) {
+    const words = $('#cdText').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    return allRecs().filter((f) => {
+      for (const [k, v] of CD.filters) if (k !== skip && condVal(f, k) !== v) return false;
+      const s = searchText(f);
+      return words.every((w) => s.includes(w));
+    });
+  }
+
+  function openPicker() {
+    renderCondTable();
+    if (!cdlg.open) cdlg.showModal();
+  }
+
+  function renderCondTable() {
+    const recs = allRecs();
+    const all = condKeys(recs);
+    const vary = new Set(Cond.varying(recs.filter((f) => f.cond && f.cond.values).map((f) => f.cond.values)));
+    for (const k of [...CD.filters.keys()]) if (!all.includes(k)) CD.filters.delete(k);
+    for (const id of [...CD.ticked]) { const f = recById(id) || S.pool.find((p) => p.id === id); if (!f || !tickable(f)) CD.ticked.delete(id); }
+    const keys = $('#cdVary').checked ? all.filter((k) => vary.has(k) || CD.filters.has(k)) : all;
+
+    const rows = filteredRecs();
+    if (CD.sort === '') rows.sort((a, b) => CD.dir * Tss.natural(a.path, b.path));
+    else if (CD.sort) rows.sort((a, b) => CD.dir * Cond.compare(condVal(a, CD.sort), condVal(b, CD.sort)));
+    const arrow = (k) => (CD.sort === k ? (CD.dir > 0 ? ' ▲' : ' ▼') : '');
+
+    const shownTickable = rows.filter(tickable);
+    const allOn = shownTickable.length > 0 && shownTickable.every((f) => CD.ticked.has(f.id));
+    let h = `<table><thead><tr><th class="cdfile"><label class="cdall" title="Tick or untick every file shown"><input type="checkbox" data-tickall${allOn ? ' checked' : ''}${shownTickable.length ? '' : ' disabled'}></label>
+      <span data-sort="" title="Sort by file path">File${arrow('')}</span></th>`;
+    for (const k of keys) {
+      // Value choices come from the rows that pass the other filters, with how many files have each.
+      const counts = new Map();
+      for (const f of filteredRecs(k)) { const v = condVal(f, k); counts.set(v, (counts.get(v) || 0) + 1); }
+      const values = [...counts.keys()].sort(Cond.compare);
+      const cur = CD.filters.has(k) ? CD.filters.get(k) : null;
+      if (cur !== null && !counts.has(cur)) values.push(cur);
+      const opts = values.map((v) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${v ? esc(v) : '(blank)'} (${counts.get(v) || 0})</option>`).join('');
+      h += `<th class="${vary.has(k) ? 'vary' : ''}${cur !== null ? ' filt' : ''}"><span data-sort="${esc(k)}" title="Sort by ${esc(k)}">${esc(k)}${arrow(k)}</span>
+        <select data-filt="${esc(k)}" title="Show only files with this ${esc(k)}"><option value="*">all</option>${opts}</select>
+        <label class="cdname" title="Use this condition in file names"><input type="checkbox" data-name="${esc(k)}"${CD.nameKeys.has(k) ? ' checked' : ''}>name</label></th>`;
+    }
+    h += '</tr></thead><tbody>';
+    for (const f of rows) {
+      const state = f.status === 'ready' ? '<span class="cdok" title="Loaded">●</span>'
+        : f.status === 'loading' ? '<span class="lbl">loading…</span>'
+        : `<input type="checkbox" data-tick${CD.ticked.has(f.id) ? ' checked' : ''}>${f.status === 'error' ? ` <span class="ferr" title="${esc(f.error)}">error</span>` : ''}`;
+      h += `<tr data-id="${f.id}" class="${tickable(f) ? 'tk' : 'loaded'}${CD.ticked.has(f.id) ? ' on' : ''}" title="${esc(f.path)}${f.cond ? `\n${esc(f.cond.path)}` : '\n(no test-condition JSON found)'}">
+        <td class="cdfile">${state} <span class="cdalias">${esc(f.alias)}</span><span class="fdir">${esc(f.dir)}</span></td>`;
+      for (const k of keys) h += `<td>${f.cond && f.cond.error ? '' : esc(condVal(f, k))}</td>`;
+      h += '</tr>';
+    }
+    if (!rows.length) h += `<tr><td class="cdfile lbl" colspan="${keys.length + 1}">${recs.length ? 'No file matches the filters.' : 'No files. Use Open folder to find captures.'}</td></tr>`;
+    $('#cdTable').innerHTML = h + '</tbody></table>';
+
+    const loaded = recs.filter((f) => f.status === 'ready').length;
+    $('#cdInfo').textContent = !recs.length ? '' : `${rows.length} of ${recs.length} files shown · ${loaded} loaded · ${CD.ticked.size} ticked`;
+    $('#cdLoad').textContent = CD.ticked.size ? `Load ${CD.ticked.size} ticked file${CD.ticked.size > 1 ? 's' : ''}` : 'Load ticked files';
+    $('#cdLoad').disabled = !CD.ticked.size;
+    $('#cdClear').disabled = !CD.filters.size && !$('#cdText').value;
+  }
+
+  /** Move the ticked candidates into the file list and load every ticked file. */
+  async function loadTicked() {
+    const recs = allRecs().filter((f) => CD.ticked.has(f.id) && tickable(f));
+    CD.ticked.clear();
+    if (!recs.length) return;
+    S.pool = S.pool.filter((f) => !recs.includes(f));
+    for (const f of recs) if (!S.files.includes(f)) S.files.push(f);
+    cdlg.close();
+    attachConds();
+    renderFiles(); rebuild();
+    for (const [i, f] of recs.entries()) {
+      status(`Loading ${i + 1} of ${recs.length}: ${f.alias}`, 60000);
+      await loadFile(f);
+    }
+    status(`Loaded ${recs.length} file${recs.length > 1 ? 's' : ''}`);
+  }
+
+  /** Display names from the marked condition columns, e.g. "high_voltage=600 · test_current=10". */
+  function nameFromConds() {
+    const recs = allRecs();
+    const keys = condKeys(recs).filter((k) => CD.nameKeys.has(k));
+    if (!keys.length) { status('Tick "name" under the conditions to use in file names'); return; }
+    const seen = new Map();
+    for (const f of recs) {
+      const v = f.cond && f.cond.values;
+      const parts = v ? keys.filter((k) => condVal(f, k)).map((k) => `${k}=${condVal(f, k)}`) : [];
+      let name = parts.length ? parts.join(' · ') : stem(f.name);
+      const n = (seen.get(name) || 0) + 1;
+      seen.set(name, n);
+      if (n > 1) name += ` #${n}`;
+      f.alias = name;
+    }
+    renderFiles(); rebuild(); renderCondTable();
+    if (!tpanel.hidden) computeTrends();
+  }
+
+  function resetNames() {
+    for (const f of allRecs()) f.alias = stem(f.name);
+    renderFiles(); rebuild(); renderCondTable();
+    if (!tpanel.hidden) computeTrends();
+  }
+
+  $('#btnCond').addEventListener('click', openPicker);
+  $('#cdClose').addEventListener('click', () => cdlg.close());
+  $('#cdVary').addEventListener('change', renderCondTable);
+  $('#cdText').addEventListener('input', renderCondTable);
+  $('#cdText').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.preventDefault(); });
+  $('#cdClear').addEventListener('click', () => { CD.filters.clear(); $('#cdText').value = ''; renderCondTable(); });
+  $('#cdLoad').addEventListener('click', loadTicked);
+  $('#cdName').addEventListener('click', nameFromConds);
+  $('#cdReset').addEventListener('click', resetNames);
+
+  $('#cdTable').addEventListener('change', (e) => {
+    const t = e.target;
+    if (t.dataset.name !== undefined) {
+      if (t.checked) CD.nameKeys.add(t.dataset.name); else CD.nameKeys.delete(t.dataset.name);
+      saveNameKeys();
+    } else if (t.dataset.filt !== undefined) {
+      if (t.value === '*') CD.filters.delete(t.dataset.filt); else CD.filters.set(t.dataset.filt, t.value);
+      renderCondTable();
+    } else if (t.dataset.tickall !== undefined) {
+      for (const f of filteredRecs().filter(tickable)) { if (t.checked) CD.ticked.add(f.id); else CD.ticked.delete(f.id); }
+      renderCondTable();
+    }
+  });
+
+  $('#cdTable').addEventListener('click', (e) => {
+    if (e.target.closest('.cdname, select, .cdall')) return;
+    const s = e.target.closest('[data-sort]');
+    if (s) {
+      const k = s.dataset.sort;
+      if (CD.sort === k) CD.dir = -CD.dir; else { CD.sort = k; CD.dir = 1; }
+      renderCondTable();
+      return;
+    }
+    const row = e.target.closest('tr[data-id]');
+    if (!row) return;
+    const id = +row.dataset.id;
+    const rec = allRecs().find((f) => f.id === id);
+    if (!rec) return;
+    if (tickable(rec)) {
+      // Click anywhere on the row (or its checkbox) to tick or untick it.
+      const on = e.target.matches('[data-tick]') ? e.target.checked : !CD.ticked.has(id);
+      if (on) CD.ticked.add(id); else CD.ticked.delete(id);
+      renderCondTable();
+      return;
+    }
+    // A loaded file: show it in the file list.
+    cdlg.close();
+    rec.open = true;
+    renderFiles();
+    const card = document.querySelector(`#files .file[data-id="${rec.id}"]`);
+    if (card) { card.hidden = false; card.scrollIntoView({ block: 'nearest' }); }
+  });
 
   // ================================================================ math dialog
 
@@ -1185,7 +1458,7 @@
   } catch (_) { /* ignore */ }
 
   document.addEventListener('keydown', (e) => {
-    if (e.target.matches('input, select, textarea') || $('#help').open || mdlg.open) return;
+    if (e.target.matches('input, select, textarea') || $('#help').open || mdlg.open || cdlg.open) return;
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       const t = S.selected && S.byId.get(S.selected);
       if (!t) return;
@@ -1204,7 +1477,7 @@
 
   const fromInput = (input) => [...input.files].map((f) => ({ file: f, path: f.webkitRelativePath || f.name }));
   $('#pickFiles').addEventListener('change', (e) => { addEntries(fromInput(e.target)); e.target.value = ''; });
-  $('#pickFolder').addEventListener('change', (e) => { addEntries(fromInput(e.target)); e.target.value = ''; });
+  $('#pickFolder').addEventListener('change', (e) => { addEntries(fromInput(e.target), true); e.target.value = ''; });
 
   if (typeof DecompressionStream === 'undefined') {
     status('This browser lacks DecompressionStream; please use a current Chrome, Edge, Firefox or Safari.', 600000);

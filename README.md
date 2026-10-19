@@ -52,9 +52,13 @@ Tip: bookmark the page (Ctrl+D) so you can reopen it quickly.
 ### 4. Load captures
 
 - **Open files**: select one or more `.tss` files. Hold Ctrl or Shift to select several.
-- **Open folder**: select a folder. Every `.tss` file below it is listed.
-  With up to 6 files they load straight away. With more, click a file in the list to load it.
-  Chrome and Edge then ask *"Upload N files to this site?"*. Click **Upload**. That is the browser's
+  Select their test-condition `.json` files too, to see the test conditions.
+- **Open folder**: select a folder (a day, a month or more). Every `.tss` file below it is found,
+  together with its test conditions when a matching `.json` file is in the same folder (see
+  *Test conditions* below). A picker opens: narrow the list by condition values (e.g. `chip_id`
+  02016018, `high_voltage` 600), tick the captures you want and click **Load**. Nothing is loaded
+  before that. Captures you did not pick stay available under **Conditions** (or *Choose…* in the file list).
+  Chrome and Edge first ask *"Upload N files to this site?"*. Click **Upload**. That is the browser's
   standard wording for letting the page read the files. Nothing leaves your computer.
 
 Press **?** in the top-right corner for the mouse and keyboard reference.
@@ -98,7 +102,21 @@ If the repository is private, Pages availability depends on your GitHub plan.
 
 - **Load** `.tss` files with *Open files* or *Open folder*.
   A `tss_corrections.txt` (`channel:BadName,NewName`) in the same folder renames channels.
-  With more than 6 files, they are listed and each one loads when you click it.
+  With *Open folder* you pick the captures to load by their test conditions. With *Open files* and
+  more than 6 files, they are listed and each one loads when you click it.
+- **Test conditions** from a `.json` file saved next to each capture:
+  - A JSON file belongs to a capture in the same folder when the names match (`run1.tss` + `run1.json`),
+    or match after a leading prefix of letters is dropped (`Tek20261007T114340.tss` + `Cfg20261007T114340.json`).
+  - Each file's conditions are listed in its card. Conditions that differ between the listed files
+    are highlighted and also shown under the file name.
+  - *Conditions* opens the file picker: every capture (loaded or not) against its conditions.
+    Pick a value under a condition to show only those files; each box lists the values left by the
+    other filters, with how many files have each. Click a condition's name to sort by it.
+    Tick rows (or the header box for every file shown) and click *Load*.
+  - Mark *name* under some conditions and click *Name files from marked* to name the files after
+    them (e.g. `high_voltage=600 · period_ms=100`) in legends and trends.
+  - Closing a file puts it back among the picker's candidates.
+  - The file filter also searches the conditions, e.g. `high_voltage 600`.
 - **Channels:** toggle them per file, or across every file with *Channels in all files*.
 - **Frames (FastFrame):** type `1-5, 8` or click the frame buttons. Alt+click selects one frame only.
 - **Panes:** one per channel (overlays the same signal from every file), one per file, one per frame, or a single pane.
@@ -134,6 +152,7 @@ edit the files and reload the page. Load order is set in `index.html`.
 | `js/zip.js` | Minimal zip reader (uses the browser's `DecompressionStream`) |
 | `js/wfm.js` | WFM v3 parser, ported from `DynamicAnalytic/dpa/tekwfm.py` (incl. FastFrame trigger times) |
 | `js/tss.js` | `.tss` reader: channel labels from the nested `.set`, corrections, lazy channel decode |
+| `js/cond.js` | Test-condition `.json` files: parsing, pairing with captures, finding conditions that differ |
 | `js/series.js` | One frame of one channel, with a min/max pyramid for fast drawing of long records |
 | `js/math.js` | Math expression parser and vectorised evaluator (integ, diff, smooth, …) with unit inference |
 | `js/trend.js` | Frame trends: per-frame window measurements (mean, integral, …) and their chart |
