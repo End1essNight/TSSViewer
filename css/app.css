@@ -255,6 +255,10 @@ dialog td { padding: 4px 0; color: var(--muted); }
 .trend-bar .spacer { flex: 1; }
 #trendList { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 10px 6px; }
 #trendList:empty { display: none; }
+#trendBatch { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding: 0 10px 6px; font-size: 12px; color: var(--muted); }
+#trendBatch:empty { display: none; }
+#trendBatch .warn { color: #c48a00; }
+.cdtag { font-size: 10px; padding: 0 5px; margin-left: 4px; border: 1px solid var(--accent); border-radius: 8px; color: var(--accent); }
 #trendList .chip { display: inline-flex; align-items: center; gap: 6px; }
 #trendList .chip.on .lbl, #trendList .chip.on .xbtn { color: var(--accent-text); }
 #trendList .xbtn { font-size: 13px; padding: 0; }

@@ -126,6 +126,7 @@
       attachConds();
       const n = added.filter((r) => r.cond).length;
       status(`${added.length} captures found${n ? `, ${n} with test conditions` : ''}. Tick the ones to load.`, 8000);
+      renderFiles();
       openPicker();
       return;
     }
@@ -622,6 +623,8 @@
     if (act === 'clear') {
       S.files = []; S.pool = []; S.ts.clear(); S.selected = null; S.conds.clear(); S.condVary = [];
       CD.ticked.clear(); CD.filters.clear();
+      if (TR.run) TR.run.stop = true;
+      TR.batch.clear(); scheduleTrends();
       renderFiles(); rebuild(); return;
     }
     if (act === 'pick') { openPicker(); return; }
@@ -899,8 +902,9 @@
       const state = f.status === 'ready' ? '<span class="cdok" title="Loaded">●</span>'
         : f.status === 'loading' ? '<span class="lbl">loading…</span>'
         : `<input type="checkbox" data-tick${CD.ticked.has(f.id) ? ' checked' : ''}>${f.status === 'error' ? ` <span class="ferr" title="${esc(f.error)}">error</span>` : ''}`;
+      const measured = TR.batch.has(f.id) && !TR.batch.get(f.id).error ? ' <span class="cdtag" title="Measured for Frame trends without loading">measured</span>' : '';
       h += `<tr data-id="${f.id}" class="${tickable(f) ? 'tk' : 'loaded'}${CD.ticked.has(f.id) ? ' on' : ''}" title="${esc(f.path)}${f.cond ? `\n${esc(f.cond.path)}` : '\n(no test-condition JSON found)'}">
-        <td class="cdfile">${state} <span class="cdalias">${esc(f.alias)}</span><span class="fdir">${esc(f.dir)}</span></td>`;
+        <td class="cdfile">${state} <span class="cdalias">${esc(f.alias)}</span>${measured}<span class="fdir">${esc(f.dir)}</span></td>`;
       for (const k of keys) h += `<td>${f.cond && f.cond.error ? '' : esc(condVal(f, k))}</td>`;
       h += '</tr>';
     }
@@ -911,6 +915,8 @@
     $('#cdInfo').textContent = !recs.length ? '' : `${rows.length} of ${recs.length} files shown · ${loaded} loaded · ${CD.ticked.size} ticked`;
     $('#cdLoad').textContent = CD.ticked.size ? `Load ${CD.ticked.size} ticked file${CD.ticked.size > 1 ? 's' : ''}` : 'Load ticked files';
     $('#cdLoad').disabled = !CD.ticked.size;
+    $('#cdMeasure').textContent = CD.ticked.size ? `Measure ${CD.ticked.size} ticked` : 'Measure ticked';
+    $('#cdMeasure').disabled = !CD.ticked.size;
     $('#cdClear').disabled = !CD.filters.size && !$('#cdText').value;
   }
 
@@ -963,6 +969,13 @@
   $('#cdText').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.preventDefault(); });
   $('#cdClear').addEventListener('click', () => { CD.filters.clear(); $('#cdText').value = ''; renderCondTable(); });
   $('#cdLoad').addEventListener('click', loadTicked);
+  $('#cdMeasure').addEventListener('click', () => {
+    const recs = allRecs().filter((f) => CD.ticked.has(f.id) && tickable(f));
+    if (!TR.list.length) { cdlg.close(); measureFiles([]); return; }   // explains that a measurement is needed first
+    CD.ticked.clear();
+    cdlg.close();
+    measureFiles(recs);
+  });
   $('#cdName').addEventListener('click', nameFromConds);
   $('#cdReset').addEventListener('click', resetNames);
 
@@ -1151,7 +1164,9 @@
   // cursors, so each waveform's Δt shift moves it relative to the window.
 
   const trend = new TrendChart($('#trendPlot'), { onHover: renderTrendTable, onPick: pickTrendPoint });
-  const TR = { list: [], nextId: 1, sel: null, xMode: 'frame', data: [], gen: 0 };
+  // batch: rec id -> results of files measured without being loaded (see measureFiles()).
+  const TR = { list: [], nextId: 1, sel: null, xMode: 'frame', data: [], gen: 0, batch: new Map(), run: null };
+  const defKey = (d) => `${d.ch}|${d.stat}|${d.a}|${d.b}`;
   const tpanel = $('#trendPanel');
 
   const trendName = (d) => `${Trend.STATS[d.stat].label} ${d.ch}`;
@@ -1175,13 +1190,14 @@
     renderTrendList();
   }
 
-  /** Channel choices: every channel label (math included) of the loaded files. */
+  /** Channel choices: every channel label (math included) of the loaded and measured files. */
   function fillTrendChannels() {
     const opts = [];
     for (const f of S.files) {
       if (f.status !== 'ready') continue;
       for (const c of f.cap.channels) if (!opts.includes(c.label)) opts.push(c.label);
     }
+    for (const b of TR.batch.values()) for (const l of b.labels) if (!opts.includes(l)) opts.push(l);
     const sel = $('#tCh'), html = opts.map((o) => `<option>${esc(o)}</option>`).join('');
     if (sel.innerHTML === html) return;   // keep an open dropdown undisturbed
     const prev = sel.value;
@@ -1200,10 +1216,18 @@
     const gen = ++TR.gen;
     fillTrendChannels();
     const ready = S.files.filter((f) => f.status === 'ready');
+    // Files measured without loading; once a file is loaded its live (shift-aware) values are used.
+    const batch = [...TR.batch.values()].filter((b) => !b.error && b.rec.status !== 'ready');
     const pal = PALETTE[isDark() ? 'dark' : 'light'];
     const panes = [];
     for (const d of TR.list) {
       const pane = { def: d, title: `${trendName(d)}  ${trendWin(d)}`, unit: null, series: [] };
+      const addSeries = (rec, k, ys, ft, u) => {
+        const xs = new Float64Array(ys.length);
+        for (let f = 0; f < ys.length; f++) xs[f] = TR.xMode === 'time' ? ft[f] : f + 1;
+        pane.unit = pane.unit === null || pane.unit === u ? u : '';
+        pane.series.push({ rec, name: rec.alias, color: pal[k % pal.length], xs, ys, ft });
+      };
       for (const [k, rec] of ready.entries()) {
         const ch = rec.cap.channels.find((c) => c.label === d.ch);
         if (!ch) continue;
@@ -1211,22 +1235,26 @@
         if (gen !== TR.gen) return;   // superseded by a newer request
         if (!ch.wfm) continue;
         const w = ch.wfm, nF = w.frameCount, ft = w.frameTimes || rec.cap.info.frameTimes;
-        const xs = new Float64Array(nF), ys = new Float64Array(nF);
+        const ys = new Float64Array(nF);
         for (let f = 0; f < nF; f++) {
           const st = S.ts.get(`${rec.id}|${ch.key}|${f}`);
           const shift = rec.offset + (st ? st.offset : 0);
-          xs[f] = TR.xMode === 'time' ? ft[f] : f + 1;
           ys[f] = Trend.measure(seriesFor(ch, f), d.a - shift, d.b - shift, d.stat);
         }
-        const u = Trend.STATS[d.stat].unit(w.units);
-        pane.unit = pane.unit === null || pane.unit === u ? u : '';
-        pane.series.push({ rec, name: rec.alias, color: pal[k % pal.length], xs, ys });
+        addSeries(rec, k, ys, ft, Trend.STATS[d.stat].unit(w.units));
+      }
+      for (const [j, b] of batch.entries()) {
+        const v = b.vals.get(defKey(d));
+        if (v) addSeries(b.rec, ready.length + j, v.ys, b.ft, v.unit);
       }
       pane.unit = pane.unit || '';
       panes.push(pane);
     }
     TR.data = panes;
-    const empty = !ready.length ? 'Load .tss files to measure them.' : 'Pick what to measure, a channel and a time window above, then Add.';
+    renderBatchInfo();
+    const empty = !ready.length && !batch.length
+      ? 'Load .tss files, or tick files under Conditions and click Measure ticked, to measure them.'
+      : 'Pick what to measure, a channel and a time window above, then Add.';
     trend.setData(panes, TR.xMode === 'time' ? 's' : '', empty);
     renderTrendTable(null);
   }
@@ -1264,9 +1292,19 @@
   }
 
   /** Click on a point: show that frame of that file (Shift/Ctrl+click adds it to the selection). */
-  function pickTrendPoint(s, i, e) {
+  async function pickTrendPoint(s, i, e) {
     const rec = s.rec;
-    if (!S.files.includes(rec)) return;
+    if (S.pool.includes(rec)) {
+      // A file measured without loading: load it now, showing the clicked frame.
+      S.pool = S.pool.filter((f) => f !== rec);
+      S.files.push(rec);
+      attachConds();
+      rec.selFrames = new Set([i]);
+      status(`Loading ${rec.alias} to show frame ${i + 1}…`);
+      await loadFile(rec);
+      return;
+    }
+    if (!S.files.includes(rec) || rec.status !== 'ready') return;
     if (e.shiftKey || e.ctrlKey || e.metaKey) rec.selFrames.add(i); else rec.selFrames = new Set([i]);
     rec.open = true;
     renderFiles(); rebuild();
@@ -1278,7 +1316,82 @@
       ${esc(trendName(d))} <span class="lbl">${esc(trendWin(d))}</span><button type="button" class="xbtn" data-act="del" title="Remove">×</button></span>`).join('');
     $('#tAdd').textContent = TR.sel ? 'Add new' : 'Add';
     $('#tUpd').hidden = !TR.sel;
+    renderBatchInfo();
   }
+
+  // ---------------------------------------------------------------- measuring files without loading
+  //
+  // The measurements in TR.list are applied to each file in turn: open it, measure every frame,
+  // keep only the numbers and let the capture go, so a whole folder can be measured. These files
+  // are not shown in the waveform plot, so no time shifts apply to them.
+
+  async function measureFiles(recs) {
+    toggleTrends(true);
+    if (!TR.list.length) {
+      status('First define a measurement here (what, channel, time window) and click Add; then measure the files.', 10000);
+      return;
+    }
+    if (TR.run) { status('Already measuring files; wait or click Stop'); return; }
+    recs = recs.filter((r) => r.status !== 'ready');   // loaded files are measured live anyway
+    const run = TR.run = { stop: false, done: 0, total: recs.length };
+    const defs = [...TR.list];
+    renderBatchInfo();
+    for (const rec of recs) {
+      if (run.stop) break;
+      const entry = { rec, vals: new Map(), labels: [], ft: [], error: null };
+      try {
+        // A stand-in record: same blob, own id (so no Δt shifts apply), dropped after measuring.
+        const tmp = { id: `m${rec.id}`, status: 'ready', selCh: new Set(), offset: 0, cap: await Tss.open(rec.blob, S.corrections.get(rec.dir) || {}) };
+        syncMath(tmp);
+        entry.labels = tmp.cap.channels.map((c) => c.label);
+        entry.ft = tmp.cap.info.frameTimes;
+        for (const d of defs) {
+          const ch = tmp.cap.channels.find((c) => c.label === d.ch);
+          if (!ch) continue;
+          await loadCh(tmp, ch);
+          const w = ch.wfm, ys = new Float64Array(w.frameCount);
+          for (let f = 0; f < w.frameCount; f++) ys[f] = Trend.measure(seriesFor(ch, f), d.a, d.b, d.stat);
+          entry.vals.set(defKey(d), { ys, unit: Trend.STATS[d.stat].unit(w.units) });
+        }
+      } catch (err) {
+        entry.error = err.message || String(err);
+        console.error(err);
+      }
+      TR.batch.set(rec.id, entry);
+      run.done++;
+      renderBatchInfo();
+      scheduleTrends();
+      await new Promise((r) => setTimeout(r, 0));   // let the page repaint between files
+    }
+    TR.run = null;
+    computeTrends();
+    const failed = recs.filter((r) => TR.batch.get(r.id) && TR.batch.get(r.id).error).length;
+    status(`${run.stop ? 'Stopped: ' : ''}measured ${run.done} of ${recs.length} file${recs.length > 1 ? 's' : ''}${failed ? `, ${failed} could not be read` : ''}`, 8000);
+  }
+
+  /** Status line for files measured without loading: progress, failures, out-of-date results. */
+  function renderBatchInfo() {
+    const el = $('#trendBatch'), run = TR.run, list = [...TR.batch.values()];
+    if (run) {
+      el.innerHTML = `<span>Measuring files: ${run.done} of ${run.total}…</span><button type="button" class="btn small" data-act="stop">Stop</button>`;
+      return;
+    }
+    if (!list.length) { el.innerHTML = ''; return; }
+    const errs = list.filter((b) => b.error);
+    const stale = list.filter((b) => !b.error && TR.list.some((d) => !b.vals.has(defKey(d)) && b.labels.includes(d.ch))).length;
+    el.innerHTML = `<span>${list.length} file${list.length > 1 ? 's' : ''} measured without loading</span>
+      ${errs.length ? `<span class="ferr" title="${esc(errs.map((b) => `${b.rec.path}: ${b.error}`).join('\n'))}">${errs.length} could not be read</span>` : ''}
+      ${stale ? `<span class="warn">${stale} lack the newest measurements</span>` : ''}
+      <button type="button" class="btn small${stale ? ' primary' : ''}" data-act="redo" title="Measure these files again with the current measurements">Measure again</button>
+      <button type="button" class="btn small" data-act="drop" title="Remove these files from the trends">Remove</button>`;
+  }
+
+  $('#trendBatch').addEventListener('click', (e) => {
+    const act = e.target.dataset.act;
+    if (act === 'stop' && TR.run) TR.run.stop = true;
+    else if (act === 'redo') { const recs = [...TR.batch.values()].map((b) => b.rec); TR.batch.clear(); measureFiles(recs); }
+    else if (act === 'drop') { TR.batch.clear(); computeTrends(); }
+  });
 
   /** Read the form; returns {ch, stat, a, b} or null (bad fields are outlined). */
   function readTrendForm() {
@@ -1333,36 +1446,43 @@
     syncTrendForm();
   }
 
+  const csvQ = (v) => (/[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+  const csvNum = (v) => (isFinite(v) ? String(v) : '');
+
+  /**
+   * Every measured file in one CSV, one row per file and frame: the file's folder and name, all its test conditions
+   * (blank when it has no .json), frame, trigger time and one column per measurement.
+   */
   function exportTrendCsv() {
     const panes = TR.data.filter((p) => p.series.length);
     if (!panes.length) { status('Nothing to export: add a measurement first'); return; }
-    const q = (v) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
     const recs = [];
     for (const p of panes) for (const s of p.series) if (!recs.includes(s.rec)) recs.push(s.rec);
-    const cols = [{ name: 'frame', get: (f) => f + 1 }];
+    const keys = condKeys(recs);
+    const cols = panes.map((p) => `${trendName(p.def)} ${trendWin(p.def)}${p.unit ? ` [${p.unit}]` : ''}`);
+    const lines = [['file path', 'file name', ...keys, 'frame', 'trigger time [s]', ...cols].map(csvQ).join(',')];
     for (const rec of recs) {
-      const ft = rec.cap.info.frameTimes;
-      cols.push({ name: `${rec.alias} · trigger time [s]`, get: (f) => (f < ft.length ? ft[f] : NaN) });
-    }
-    for (const p of panes) {
-      for (const s of p.series) {
-        cols.push({ name: `${s.name} · ${trendName(p.def)} ${trendWin(p.def)}${p.unit ? ` [${p.unit}]` : ''}`, get: (f) => (f < s.ys.length ? s.ys[f] : NaN) });
+      const ser = panes.map((p) => p.series.find((s) => s.rec === rec) || null);
+      const ft = ser.find(Boolean).ft || [];
+      const nF = Math.max(...ser.filter(Boolean).map((s) => s.ys.length));
+      const head = [rec.dir, rec.name, ...keys.map((k) => condVal(rec, k))].map(csvQ).join(',');
+      for (let f = 0; f < nF; f++) {
+        lines.push(`${head},${f + 1},${csvNum(ft[f])},${ser.map((s) => (s && f < s.ys.length ? csvNum(s.ys[f]) : '')).join(',')}`);
       }
     }
-    const nF = Math.max(...recs.map((r) => r.cap.info.frameCount));
-    const lines = [cols.map((c) => q(c.name)).join(',')];
-    for (let f = 0; f < nF; f++) lines.push(cols.map((c) => { const v = c.get(f); return isFinite(v) ? String(v) : ''; }).join(','));
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' }));   // BOM: Excel reads µ, Ω
     a.download = 'tss-trends.csv';
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    status(`Saved tss-trends.csv: ${recs.length} file${recs.length > 1 ? 's' : ''}, ${lines.length - 1} rows`);
   }
 
   $('#btnTrend').addEventListener('click', () => toggleTrends());
   $('#tClose').addEventListener('click', () => toggleTrends(false));
   $('#tCur').addEventListener('click', setTrendWindowFromCursors);
   $('#tCsv').addEventListener('click', exportTrendCsv);
+  $('#tMeasure').addEventListener('click', openPicker);
   $('#tX').addEventListener('change', (e) => { TR.xMode = e.target.value; saveTrends(); computeTrends(); });
   $('#trendForm').addEventListener('input', syncTrendForm);
   $('#trendForm').addEventListener('change', syncTrendForm);

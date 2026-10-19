@@ -88,10 +88,12 @@
           <span class="spacer"></span>
           <span class="lbl">X axis</span>
           <select id="tX"><option value="frame">Frame number</option><option value="time">Trigger time</option></select>
-          <button type="button" class="btn small" id="tCsv" title="Save every measured value as a CSV file">CSV</button>
+          <button type="button" class="btn small" id="tMeasure" title="Apply these measurements to more files from the opened folder, without loading them">Measure files…</button>
+          <button type="button" class="btn small" id="tCsv" title="Save every measured value in one CSV file: one row per file and frame, with the file's test conditions">CSV</button>
           <button type="button" class="xbtn" id="tClose" title="Close frame trends">×</button>
         </form>
         <div id="trendList"></div>
+        <div id="trendBatch"></div>
         <div class="trend-body">
           <div id="trendHost"><canvas id="trendPlot"></canvas></div>
           <div id="trendTable"></div>
@@ -144,6 +146,7 @@
       <button type="button" class="btn" id="cdReset" title="Name every file after its .tss file again">Reset names</button>
       <span style="flex:1"></span>
       <button type="button" class="btn" id="cdClose">Close</button>
+      <button type="button" class="btn" id="cdMeasure" title="Apply the Frame trends measurements to the ticked files without loading them: plot the trends and export CSVs">Measure ticked</button>
       <button type="button" class="btn primary" id="cdLoad">Load ticked files</button>
     </div>
   </dialog>

@@ -138,7 +138,18 @@ If the repository is private, Pages availability depends on your GitHub plan.
   - Measurements: mean, integral, RMS, min, max, peak-peak, or the value at one time. Math channels work too, e.g. the integral of `Vd*Is` for energy per pulse.
   - Type the window (`200n` to `500n`) or click *From cursors*. The window is in displayed time, so a waveform's Δt shift moves it relative to the window; the window being edited is shaded on the plot.
   - Every loaded file with that channel gets its own line. Hover to read one frame's values in the table; click a point to show that frame (Shift+click adds it).
-  - *CSV* saves every value. Measurements are remembered between sessions.
+  - *CSV* saves every value of every plotted file (loaded or measured without loading) in one
+    `tss-trends.csv`, one row per file and frame. Columns: `file path` (the folder, relative to the
+    folder you opened), `file name`, every test condition from the
+    `.json` files (blank for a file without one), `frame`, `trigger time [s]`, then one column per
+    measurement. This suits Excel pivot tables or pandas, e.g. grouping by `high_voltage`.
+    Measurements are remembered between sessions.
+  - **Apply the same measurements to many files** without loading them: define the measurements
+    (e.g. on one loaded file), then click *Measure files…* (or *Conditions*), filter and tick the
+    files, and click *Measure ticked*. Each file is opened, measured on every frame and released,
+    so a whole folder fits in memory. The results are plotted with the loaded files; click a point
+    to load that file at that frame. These files have no time shifts. After adding or changing a
+    measurement, click *Measure again*.
 - **Measure:** `C` shows cursors A/B with Δt and each waveform's values at A and B. The legend shows each waveform's value at the mouse.
 - *PNG* saves the plot; *Scope screenshot* opens the screenshot stored in the capture.
 
