@@ -503,7 +503,7 @@
   function renderFiles() {
     const host = $('#files');
     const ready = S.files.filter((f) => f.status === 'ready');
-    let h = `<div class="section-h"><span>Files (${S.files.length})</span>${S.files.length || S.pool.length ? '<button class="btn small" data-act="clear">Close all</button>' : ''}</div>`;
+    let h = `<div class="section-h"><span>Files (${S.files.length})</span><span>${S.files.some((f) => f.selFrames.size) ? '<button class="btn small" data-act="clearplot" title="Deselect every frame in every file; channels and files stay as they are">Clear waveforms</button> ' : ''}${S.files.length || S.pool.length ? '<button class="btn small" data-act="clear">Close all</button>' : ''}</span></div>`;
     if (S.pool.length) {
       h += `<div class="pool"><span>${S.pool.length} more capture${S.pool.length > 1 ? 's' : ''} in the opened folder</span>
         <button class="btn small primary" data-act="pick" title="Choose captures to load by their test conditions">Choose…</button></div>`;
@@ -625,6 +625,11 @@
       CD.ticked.clear(); CD.filters.clear();
       if (TR.run) TR.run.stop = true;
       TR.batch.clear(); scheduleTrends();
+      renderFiles(); rebuild(); return;
+    }
+    if (act === 'clearplot') {
+      for (const f of S.files) f.selFrames = new Set();
+      S.selected = null;
       renderFiles(); rebuild(); return;
     }
     if (act === 'pick') { openPicker(); return; }
@@ -1528,6 +1533,39 @@
     window.addEventListener('pointerup', up);
     e.preventDefault();
   });
+
+  // Side panels: drag the inner edge to resize, double-click to reset. Widths are remembered.
+  const SPLIT_MIN = 140;
+  const setPanelW = (side, w) => {
+    if (w) $('main').style.setProperty(`--${side}-w`, `${w}px`);
+    else $('main').style.removeProperty(`--${side}-w`);
+  };
+  try {
+    const o = JSON.parse(localStorage.getItem('tssviewer.panels') || '{}');
+    for (const side of ['side', 'trace']) if (o[side] >= SPLIT_MIN) setPanelW(side, o[side]);
+  } catch (_) { /* ignore */ }
+  const savePanels = () => {
+    const o = {};
+    for (const side of ['side', 'trace']) { const v = parseFloat($('main').style.getPropertyValue(`--${side}-w`)); if (v) o[side] = v; }
+    try { localStorage.setItem('tssviewer.panels', JSON.stringify(o)); } catch (_) { /* ignore */ }
+  };
+  for (const el of document.querySelectorAll('.vsplit')) {
+    const side = el.dataset.side, panel = $(side === 'side' ? '#sidebar' : '#tracePanel');
+    el.addEventListener('pointerdown', (e) => {
+      const sx = e.clientX, w0 = panel.getBoundingClientRect().width;
+      const max = Math.max(SPLIT_MIN, $('main').getBoundingClientRect().width * 0.45);
+      const dir = side === 'side' ? 1 : -1;
+      const move = (ev) => setPanelW(side, Math.round(Math.max(SPLIT_MIN, Math.min(max, w0 + dir * (ev.clientX - sx)))));
+      // Pointer capture keeps the drag on this handle and guarantees an end event, even if the page was busy.
+      const up = () => { el.classList.remove('drag'); el.removeEventListener('pointermove', move); el.removeEventListener('lostpointercapture', up); savePanels(); };
+      el.classList.add('drag');
+      el.setPointerCapture(e.pointerId);
+      el.addEventListener('pointermove', move);
+      el.addEventListener('lostpointercapture', up);
+      e.preventDefault();
+    });
+    el.addEventListener('dblclick', () => { setPanelW(side, 0); savePanels(); });
+  }
 
   // ================================================================ toolbar
 

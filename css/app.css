@@ -85,7 +85,11 @@ select, input[type="text"] {
 input[type="text"]:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
 /* ------------------------------------------------------------- layout */
-main { flex: 1; display: grid; grid-template-columns: 300px 1fr 320px; min-height: 0; }
+main { flex: 1; display: grid; grid-template-columns: var(--side-w, 300px) 1fr var(--trace-w, 320px); min-height: 0; position: relative; }
+.vsplit { position: absolute; top: 0; bottom: 0; width: 8px; cursor: ew-resize; z-index: 2; }
+.vsplit:hover, .vsplit.drag { background: linear-gradient(to right, transparent 3px, var(--accent) 3px, var(--accent) 5px, transparent 5px); }
+#sideSplit { left: calc(var(--side-w, 300px) - 4px); }
+#traceSplit { right: calc(var(--trace-w, 320px) - 4px); }
 #sidebar, #tracePanel { background: var(--panel); overflow-y: auto; min-height: 0; }
 #sidebar { border-right: 1px solid var(--border); }
 #tracePanel { border-left: 1px solid var(--border); }
@@ -275,13 +279,16 @@ dialog td { padding: 4px 0; color: var(--muted); }
 #trendTable .hint { padding: 8px 10px; }
 
 @media (max-width: 1100px) {
-  main { grid-template-columns: 260px 1fr; grid-template-rows: 1fr 220px; }
+  main { grid-template-columns: var(--side-w, 260px) 1fr; grid-template-rows: 1fr 220px; }
+  #sideSplit { left: calc(var(--side-w, 260px) - 4px); bottom: 220px; }
+  #traceSplit { display: none; }
   #tracePanel { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--border); }
 }
 @media (max-width: 700px) {
   body { overflow: auto; }
   main { display: flex; flex-direction: column; }
   #sidebar { max-height: 40vh; }
+  .vsplit { display: none; }
   #plotWrap { height: 70vh; flex: none; }
   .group.end { margin-left: 0; }
   #trendTable { display: none; }
