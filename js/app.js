@@ -14,6 +14,13 @@
   const stem = (name) => name.replace(/\.tss$/i, '');
   const dirOf = (path) => { const i = path.lastIndexOf('/'); return i < 0 ? '' : path.slice(0, i); };
 
+  /**
+   * Per-waveform state, kept across rebuilds (S.ts): time shift, visibility, colour and the display-only level:
+   * drawn at value * yGain + yOff, in the pane of channel `pane` (null: its own pane; 'One per channel' panes only).
+   */
+  const newTraceState = () => ({ offset: 0, visible: true, color: null, yGain: 1, yOff: 0, pane: null });
+  const levelChanged = (st) => st.yGain !== 1 || st.yOff !== 0 || !!st.pane;
+
   const S = {
     files: [],              // file records in the file list, see addEntries()
     pool: [],               // captures found by Open folder but not picked yet (see the file picker)
@@ -25,7 +32,7 @@
     traces: [],
     byId: new Map(),
     selected: null,
-    move: 'trace',
+    move: 'file',
     groupBy: 'label',
     hoverT: null,
     fitted: false,
@@ -34,7 +41,7 @@
   };
 
   const plot = new Plot($('#plot'), {
-    onShiftDrag, onShiftEnd, onSelect,
+    onShiftDrag, onShiftEnd, onSelect, onLevelDrag, onLevelEnd, onLevelScale,
     onHover: (t) => { S.hoverT = t; scheduleReadouts(); },
     onCursors: () => { renderCursorBox(); scheduleReadouts(); },
   });
@@ -407,15 +414,19 @@
           if (f >= ch.wfm.frameCount) continue;
           const id = `${rec.id}|${ch.key}|${f}`;
           let st = S.ts.get(id);
-          if (!st) S.ts.set(id, (st = { offset: 0, visible: true, color: null }));
+          if (!st) S.ts.set(id, (st = newTraceState()));
           traces.push({
             id, rec, ch, frame: f, nFrames: nF, st, series: seriesFor(ch, f), unit: ch.wfm.units,
             visible: st.visible, shift: rec.offset + st.offset, selected: id === S.selected, color: '', name: '',
+            yGain: st.yGain, yOff: st.yOff, over: false,
           });
         }
       }
     }
 
+    // With one pane per channel a waveform can be overlaid on another channel's pane (e.g. dIs/dt over Vd);
+    // the pane's axis and unit are those of its own channel, the overlaid ones are named in its title.
+    const shown = new Set(traces.map((t) => t.ch.label.toLowerCase()));
     const panes = new Map();
     for (const t of traces) {
       let key, title;
@@ -423,12 +434,21 @@
         case 'file': key = `f${t.rec.id}`; title = t.rec.alias; break;
         case 'frame': key = `fr${t.frame}`; title = `Frame ${t.frame + 1}`; break;
         case 'single': key = 'all'; title = 'All waveforms'; break;
-        default: key = `l${t.ch.label.toLowerCase()}`; title = t.ch.label;
+        default: {
+          const host = t.st.pane && t.st.pane.toLowerCase() !== t.ch.label.toLowerCase() && shown.has(t.st.pane.toLowerCase()) ? t.st.pane : null;
+          t.over = !!host;
+          key = `l${(host || t.ch.label).toLowerCase()}`; title = host || t.ch.label;
+        }
       }
-      if (!panes.has(key)) panes.set(key, { key, title, unit: t.unit, traces: [] });
+      if (!panes.has(key)) panes.set(key, { key, title, unit: null, traces: [], over: [] });
       const p = panes.get(key);
-      if (p.unit !== t.unit) p.unit = '';
+      if (t.over) { if (!p.over.includes(t.ch.label)) p.over.push(t.ch.label); }
+      else p.unit = p.unit === null || p.unit === t.unit ? t.unit : '';
       p.traces.push(t);
+    }
+    for (const p of panes.values()) {
+      if (p.over.length) p.title += ` + ${p.over.join(' + ')}`;
+      if (p.unit === null) p.unit = '';
     }
 
     const pal = PALETTE[isDark() ? 'dark' : 'light'];
@@ -451,7 +471,7 @@
   function traceName(t) {
     const fr = t.nFrames > 1 ? `F${t.frame + 1}` : '';
     const parts = {
-      label: [t.rec.alias, fr],
+      label: [t.rec.alias, t.over ? t.ch.label : '', fr],
       file: [t.ch.label, fr],
       frame: [t.rec.alias, t.ch.label],
       single: [t.rec.alias, t.ch.label, fr],
@@ -469,6 +489,7 @@
     scheduleReadouts();
     if (S.maths.length) scheduleMathRefresh();
     scheduleTrends();
+    setDpMarks();
   }
 
   function shiftTrace(t, dt) {
@@ -534,6 +555,7 @@
     host.innerHTML = h;
     if (refocus) $('#files .filter').focus();
     applyFilter();
+    renderDp();
   }
 
   function fileCard(rec) {
@@ -625,6 +647,8 @@
       CD.ticked.clear(); CD.filters.clear();
       if (TR.run) TR.run.stop = true;
       TR.batch.clear(); scheduleTrends();
+      if (DP.run) DP.run.stop = true;
+      DP.ticked.clear(); DP.seen.clear(); DP.labels.clear(); DP.results = []; DP.view = []; setDpMarks();
       renderFiles(); rebuild(); return;
     }
     if (act === 'clearplot') {
@@ -713,7 +737,7 @@
     for (const p of plot.panes) {
       h += `<div class="pane-h">${esc(p.title)}${p.unit ? ` [${esc(p.unit)}]` : ''}</div>`;
       for (const t of p.traces) {
-        h += `<div class="trace${t.selected ? ' sel' : ''}${t.visible ? '' : ' hidden-tr'}" data-id="${esc(t.id)}" title="${esc(fullName(t))}">
+        h += `<div class="trace${t.selected ? ' sel' : ''}${t.visible ? '' : ' hidden-tr'}${levelChanged(t.st) ? ' lvl' : ''}" data-id="${esc(t.id)}" title="${esc(fullName(t))}">
           <div class="tline">
             <input type="checkbox" class="eye" ${t.visible ? 'checked' : ''} title="Show / hide">
             <input type="color" class="swatch" value="${t.color}" title="Colour">
@@ -723,6 +747,7 @@
           <div class="tshift">Δt <input type="text" class="shift" value="${esc(fmtShift(t.st.offset))}" spellcheck="false" title="Time shift of this waveform, e.g. 12.5n, -3us, 40 samples">
             <button class="btn small reset" title="Zero this shift">0</button>
             <span class="fnote">${t.rec.offset ? `+ file ${esc(Units.fmt(t.rec.offset, 's', 6))}` : ''}</span></div>
+          ${levelRow(t)}
           <div class="tcur"${plot.cursors ? '' : ' hidden'}></div>
         </div>`;
       }
@@ -730,6 +755,66 @@
     host.innerHTML = h;
     updateReadouts();
   }
+
+  const fmtLevel = (v) => String(+v.toPrecision(4));
+
+  /**
+   * Level controls of a waveform (shown for the selected one, or once changed): the pane it is drawn in,
+   * its scale and offset on that pane's axis, Fit to the pane, and back to normal.
+   */
+  function levelRow(t) {
+    let pane = '';
+    if (S.groupBy === 'label') {
+      const others = [...new Set(S.traces.map((x) => x.ch.label))].filter((l) => l.toLowerCase() !== t.ch.label.toLowerCase());
+      pane = `<select class="ypane" title="Show this waveform in another channel's pane, e.g. dIs/dt over Vd">
+        <option value="">Own pane</option>${others.map((l) => `<option value="${esc(l)}"${t.over && t.st.pane === l ? ' selected' : ''}>In ${esc(l)}</option>`).join('')}</select>`;
+    }
+    return `<div class="tlevel">${pane}
+      <span title="Scale on the plot (display only), e.g. 2, 0.5, 10n">×</span><input type="text" class="ygain" value="${esc(fmtLevel(t.st.yGain))}" spellcheck="false"
+        title="Scale on the plot (display only), e.g. 2, 0.5, 10n. Alt+wheel scales the selected waveform">
+      <span title="Offset on the pane's axis (display only)">+</span><input type="text" class="yoff" value="${esc(fmtLevel(t.st.yOff))}" spellcheck="false"
+        title="Offset on the pane's axis, in its unit (display only). Drag the waveform up or down, or use ↑/↓">
+      <button class="btn small yfit" title="Scale and move it to fill the pane over the shown time span">Fit</button>
+      <button class="btn small yreset" title="Own pane, scale 1, offset 0">0</button></div>`;
+  }
+
+  function updateLevelInputs() {
+    document.querySelectorAll('#traces .trace').forEach((el) => {
+      const t = S.byId.get(el.dataset.id);
+      if (!t) return;
+      el.classList.toggle('lvl', levelChanged(t.st));
+      const g = $('.ygain', el), o = $('.yoff', el);
+      if (g !== document.activeElement) g.value = fmtLevel(t.st.yGain);
+      if (o !== document.activeElement) o.value = fmtLevel(t.st.yOff);
+    });
+  }
+
+  function setLevel(t, gain, off) {
+    t.st.yGain = t.yGain = gain;
+    t.st.yOff = t.yOff = off;
+    plot.redraw();
+    updateLevelInputs();
+  }
+
+  /** Scale and move a waveform to fill its pane over the shown time span, with a round scale (1, 2 or 5 x 10^n). */
+  function fitLevel(t) {
+    const r = plot.levelRanges(t);
+    if (!r) { status('Nothing to fit: the waveform is flat or out of view'); return; }
+    const g0 = (0.8 * (r.hi - r.lo)) / (r.rawHi - r.rawLo);
+    const e = Math.pow(10, Math.floor(Math.log10(g0))), m = g0 / e;
+    const g = (m >= 5 ? 5 : m >= 2 ? 2 : 1) * e;
+    setLevel(t, g, (r.lo + r.hi) / 2 - (g * (r.rawLo + r.rawHi)) / 2);
+    status(`${t.rec.alias} · ${t.ch.label}: drawn × ${fmtLevel(g)} + ${fmtLevel(t.st.yOff)} ${r.pane.unit} (readouts keep its own values)`);
+  }
+
+  function onLevelDrag(t, dv) { setLevel(t, t.st.yGain, t.st.yOff + dv); }
+
+  function onLevelEnd(t, total) {
+    status(`${t.rec.alias} · ${t.ch.label} moved by ${Units.fmt(total, (plot.paneOf(t) || {}).unit || '', 4)} on the plot (display only)`);
+  }
+
+  /** Scale a waveform by k about the drawn level v, which stays where it is. */
+  function onLevelScale(t, k, v) { setLevel(t, t.st.yGain * k, v + (t.st.yOff - v) * k); }
 
   function updateShiftInputs() {
     document.querySelectorAll('#traces .trace').forEach((el) => {
@@ -807,7 +892,15 @@
     const t = S.byId.get(row.dataset.id);
     if (!t) return;
     if (e.target.classList.contains('reset')) { t.st.offset = 0; applyShifts(); return; }
-    if (e.target.matches('input')) return;
+    if (e.target.classList.contains('yfit')) { fitLevel(t); return; }
+    if (e.target.classList.contains('yreset')) {
+      const moved = !!t.st.pane;
+      t.st.pane = null;
+      setLevel(t, 1, 0);
+      if (moved) rebuild();
+      return;
+    }
+    if (e.target.matches('input, select')) return;
     onSelect(S.selected === t.id ? null : t);
   });
 
@@ -823,6 +916,19 @@
       const v = Units.parseTime(e.target.value, t.series.tstep);
       e.target.classList.toggle('bad', !isFinite(v));
       if (isFinite(v)) { t.st.offset = v; applyShifts(); }
+    } else if (e.target.classList.contains('ygain') || e.target.classList.contains('yoff')) {
+      const gain = e.target.classList.contains('ygain'), v = Units.parseNum(e.target.value);
+      const ok = isFinite(v) && (!gain || v !== 0);
+      e.target.classList.toggle('bad', !ok);
+      if (ok) setLevel(t, gain ? v : t.st.yGain, gain ? t.st.yOff : v);
+    } else if (e.target.classList.contains('ypane')) {
+      // Joining another pane fits the waveform to it; back in its own pane it is drawn as it is.
+      t.st.pane = e.target.value || null;
+      if (!t.st.pane) { t.st.yGain = 1; t.st.yOff = 0; }
+      S.selected = t.id;
+      rebuild();
+      const nt = S.byId.get(t.id);
+      if (nt && nt.over) fitLevel(nt);
     }
   });
 
@@ -1437,6 +1543,7 @@
   }
 
   function toggleTrends(open = tpanel.hidden) {
+    if (open && !dpPanel.hidden) toggleDp(false);
     tpanel.hidden = !open;
     $('#btnTrend').classList.toggle('on', open);
     if (open) {
@@ -1475,12 +1582,16 @@
         lines.push(`${head},${f + 1},${csvNum(ft[f])},${ser.map((s) => (s && f < s.ys.length ? csvNum(s.ys[f]) : '')).join(',')}`);
       }
     }
+    downloadCsv('tss-trends.csv', lines);
+    status(`Saved tss-trends.csv: ${recs.length} file${recs.length > 1 ? 's' : ''}, ${lines.length - 1} rows`);
+  }
+
+  function downloadCsv(name, lines) {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' }));   // BOM: Excel reads µ, Ω
-    a.download = 'tss-trends.csv';
+    a.download = name;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-    status(`Saved tss-trends.csv: ${recs.length} file${recs.length > 1 ? 's' : ''}, ${lines.length - 1} rows`);
   }
 
   $('#btnTrend').addEventListener('click', () => toggleTrends());
@@ -1524,15 +1635,615 @@
     renderTrendList();
   });
 
-  $('#trendSplit').addEventListener('pointerdown', (e) => {
-    const sy = e.clientY, h0 = tpanel.getBoundingClientRect().height;
-    const max = $('#plotWrap').getBoundingClientRect().height - 80;
-    const move = (ev) => { tpanel.style.height = `${Math.max(160, Math.min(max, h0 - (ev.clientY - sy)))}px`; };
-    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-    e.preventDefault();
+  // ================================================================ double pulse
+  //
+  // Double-pulse parameters (dpa algorithm, see dpa.js) of the ticked files: 1. tick the captures, 2. assign
+  // the signal roles to channels, 3. pick the parameter groups, 4. Extract. Clicking a result shows that capture
+  // with its extraction points and integration windows on the plot. Loaded files are analysed with their
+  // channels' Δt shifts, so deskewing Is against Vd is honoured; files not loaded are opened just for this.
+
+  const dpPanel = $('#dpPanel');
+  const DP = {
+    ticked: new Set(),        // rec ids of the files to analyse
+    seen: new Set(),          // rec ids offered already (a file is ticked when first listed if it has a Vd channel)
+    roles: {},                // role -> 'auto' | '' (not used) | channel label
+    groups: new Set(Dpa.DEFAULT_PARAMETERS),
+    frames: 'all',            // 'all' | 'shown': which frames of FastFrame captures to analyse
+    opts: { ...Dpa.DEFAULT_SETTINGS },   // thresholds of the algorithm (see Dpa.SETTINGS)
+    optBad: {},               // setting key -> {text, msg}: a typed value that was refused
+    cfgOpen: new Set(),       // parameter groups whose thresholds are shown
+    runOpts: null,            // thresholds the results were extracted with
+    labels: new Map(),        // rec id -> channel labels of files that are not loaded
+    results: [],              // one per file and frame, see dpResult()
+    cols: [],                 // parameter groups of the results
+    view: [],                 // results shown on the plot; the last one (primary) has its marks labelled
+    staleKey: '',             // dpStale() when the view bar was drawn
+    // A result is first shown as the whole record without marks; the zoom and the groups whose marks are drawn
+    // that the user then picks are kept for the next results shown, until the next extraction.
+    zoomEv: 'all',            // 'all' | 'R1' | 'F2': event last zoomed to
+    show: new Set(),          // groups whose marks are drawn
+    run: null,
+    setupHtml: '',
+  };
+  const DP_COLOR = { time: 1, energy: 5, Qg: 3, dvdt: 4, didt: 2, Vd_overshoot: 7 };   // palette index per group
+  const DP_DASH = { time: [6, 3], energy: [2, 2], Qg: [9, 3, 2, 3], dvdt: [1, 3], didt: [5, 2, 1, 2], Vd_overshoot: [] };
+  const dpColor = (g) => PALETTE[isDark() ? 'dark' : 'light'][DP_COLOR[g]];
+  const dpPrimary = () => DP.view[DP.view.length - 1] || null;
+  const dpCol = (c) => c.replace('(uJ)', '(µJ)');
+  const dpNum = (v) => String(+v.toPrecision(4));
+  const dpGroupName = (g) => (Dpa.PARAMETERS[g] ? Dpa.PARAMETERS[g].label : g === 'read' ? 'File' : g);
+  /** Have the thresholds changed since the results were extracted? */
+  const dpOptsStale = () => DP.runOpts && Dpa.SETTINGS.some((s) => DP.runOpts[s.key] !== DP.opts[s.key]);
+  /** Settings (of group g, or all) whose value in `opts` is not the dpa default. */
+  const dpChanged = (opts, g) => Dpa.SETTINGS.filter((s) => (!g || s.group === g) && Dpa.settingActive(s, opts) && opts[s.key] !== s.def);
+  /** A setting's value as text: "85 %", "300 ns", or a choice's label. */
+  const dpOptText = (s, v) => (s.choices ? (s.choices.find((c) => c[0] === v) || [v, v])[1] : `${v} ${s.unit || '%'}`);
+  const dpChangedText = (opts, g) => dpChanged(opts, g).map((s) => `${s.label} ${dpOptText(s, opts[s.key])} (default ${dpOptText(s, s.def)})`).join('\n');
+
+  function saveDp() {
+    try { localStorage.setItem('tssviewer.dp', JSON.stringify({ roles: DP.roles, groups: [...DP.groups], frames: DP.frames, opts: DP.opts })); } catch (_) { /* ignore */ }
+  }
+
+  function loadDp() {
+    try {
+      const o = JSON.parse(localStorage.getItem('tssviewer.dp') || '{}');
+      if (o.roles) for (const r of Dpa.ROLES) if (typeof o.roles[r.key] === 'string') DP.roles[r.key] = o.roles[r.key];
+      if (Array.isArray(o.groups)) DP.groups = new Set(o.groups.filter((g) => g in Dpa.PARAMETERS));
+      if (o.frames === 'shown') DP.frames = 'shown';
+      if (o.opts) {
+        const opts = { ...Dpa.DEFAULT_SETTINGS };
+        for (const s of Dpa.SETTINGS) if (typeof o.opts[s.key] === typeof s.def) opts[s.key] = o.opts[s.key];
+        if (!Object.keys(Dpa.checkSettings(opts)).length) DP.opts = opts;
+      }
+    } catch (_) { /* ignore */ }
+    for (const r of Dpa.ROLES) if (!(r.key in DP.roles)) DP.roles[r.key] = 'auto';
+    $('#dpVer').textContent = `dpa algorithm v${Dpa.VERSION}`;
+  }
+
+  /** Channel labels of a file: from its capture when loaded, else as read by scanDpLabels() (or null). */
+  function dpLabels(rec) {
+    if (rec.status === 'ready') return rec.cap.channels.filter((c) => !c.math).map((c) => c.label);
+    return DP.labels.get(rec.id) || null;
+  }
+
+  /** role -> channel label in a file with these labels, following the assignments (null: not found / not used). */
+  function dpRoles(labels) {
+    const auto = Dpa.guessRoles(labels), out = {};
+    for (const r of Dpa.ROLES) {
+      const a = DP.roles[r.key];
+      out[r.key] = a === 'auto' ? auto[r.key] || null : a && labels.includes(a) ? a : null;
+    }
+    return out;
+  }
+
+  /** Read the channel labels of a few ticked files that are not loaded, to offer them as channel choices. */
+  let dpScanning = false;
+  async function scanDpLabels() {
+    const ticked = S.files.filter((f) => DP.ticked.has(f.id));
+    const todo = ticked.filter((f) => f.status !== 'ready' && !DP.labels.has(f.id));
+    const known = ticked.filter((f) => dpLabels(f)).length;
+    if (dpScanning || !todo.length || known >= 3) return;
+    dpScanning = true;
+    for (const rec of todo.slice(0, 3 - known)) {
+      try {
+        const cap = await Tss.open(rec.blob, S.corrections.get(rec.dir) || {});
+        DP.labels.set(rec.id, cap.channels.map((c) => c.label));
+      } catch (_) {
+        DP.labels.set(rec.id, []);
+      }
+    }
+    dpScanning = false;
+    renderDp();
+  }
+
+  function renderDp() {
+    if (dpPanel.hidden) return;
+    const ids = new Set(S.files.map((f) => f.id));
+    for (const id of [...DP.ticked]) if (!ids.has(id)) DP.ticked.delete(id);
+    for (const f of S.files) {
+      if (DP.seen.has(f.id)) continue;
+      DP.seen.add(f.id);
+      const labels = dpLabels(f);
+      if (!labels || Dpa.guessRoles(labels).vd) DP.ticked.add(f.id);
+    }
+    DP.results = DP.results.filter((r) => ids.has(r.rec.id));
+    const kept = DP.view.filter((r) => DP.results.includes(r));
+    if (kept.length !== DP.view.length) { DP.view = kept; setDpMarks(); }
+    renderDpSetup();
+    renderDpRun();
+    renderDpView();
+    renderDpResults();
+    scanDpLabels();
+  }
+
+  function renderDpSetup() {
+    const ticked = S.files.filter((f) => DP.ticked.has(f.id));
+    let h = `<div class="dp-step"><h4><span class="n">1</span>Captures <span class="lbl">${ticked.length} of ${S.files.length}</span>
+      <button class="btn small" data-act="all">All</button><button class="btn small" data-act="none">None</button></h4>`;
+    if (!S.files.length) h += '<div class="lbl">Open the double-pulse .tss files first (Open files, Open folder or Conditions).</div>';
+    else {
+      h += '<div class="dp-files">';
+      for (const f of S.files) {
+        h += `<label title="${esc(f.path)}"><input type="checkbox" data-tick="${f.id}"${DP.ticked.has(f.id) ? ' checked' : ''}>
+          <span class="nm">${esc(f.alias)}</span>${f.status === 'ready' ? '' : '<span class="lbl">not loaded</span>'}</label>`;
+      }
+      h += '</div>';
+    }
+    h += '</div>';
+
+    // Channel choices come from the ticked files; next to each, what the assignment finds in those files.
+    const lists = ticked.map(dpLabels).filter(Boolean);
+    const all = [];
+    for (const l of lists) for (const x of l) if (!all.includes(x)) all.push(x);
+    h += '<div class="dp-step"><h4><span class="n">2</span>Channels</h4><div class="dp-roles">';
+    for (const r of Dpa.ROLES) {
+      const a = DP.roles[r.key];
+      const opts = [['auto', 'Auto (by name)'], ['', '— not used —'], ...all.map((l) => [l, l])];
+      if (a && a !== 'auto' && !all.includes(a)) opts.push([a, `${a} (not in these files)`]);
+      const found = new Map();
+      let miss = 0;
+      for (const l of lists) {
+        const x = dpRoles(l)[r.key];
+        if (x) found.set(x, (found.get(x) || 0) + 1); else miss++;
+      }
+      let res = '';
+      if (a !== '' && !lists.length && ticked.length) res = 'reading channels…';
+      else if (a !== '' && lists.length) {
+        res = [...found].map(([l, k]) => (found.size > 1 || miss ? `${l} (${k})` : l)).join(', ');
+        if (miss) res += `${res ? ', ' : ''}missing in ${miss} file${miss > 1 ? 's' : ''}`;
+      }
+      h += `<b title="${esc(r.desc)}">${r.name}</b>
+        <select data-role="${r.key}" title="${esc(r.desc)}">${opts.map(([v, t]) => `<option value="${esc(v)}"${v === a ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>
+        <span class="res${miss && a !== '' ? ' warn' : ''}" title="${esc(res)}">${res ? `→ ${esc(res)}` : ''}</span>`;
+    }
+    h += '</div></div>';
+
+    // Each group's thresholds open under it (⚙); values that differ from dpa v3.5 are highlighted.
+    h += '<div class="dp-step"><h4><span class="n">3</span>Parameters</h4><div class="dp-params">';
+    for (const [g, p] of Object.entries(Dpa.PARAMETERS)) {
+      const lack = lists.length ? p.needs.filter((role) => lists.every((l) => !dpRoles(l)[role])) : [];
+      const changed = dpChanged(DP.opts, g).length, bad = Dpa.SETTINGS.some((s) => s.group === g && s.key in DP.optBad);
+      h += `<div class="dp-param"><label><input type="checkbox" data-group="${g}"${DP.groups.has(g) ? ' checked' : ''}>
+        <span>${esc(p.label)} <span class="lbl">${esc(p.detail)}</span>${lack.length ? ` <span class="warn">needs ${lack.map(Dpa.roleName).join(', ')}</span>` : ''}</span></label>
+        <button type="button" class="btn small cfg${changed || bad ? ' on' : ''}${DP.cfgOpen.has(g) ? ' open' : ''}" data-cfg="${g}"
+          title="${esc(changed ? `Thresholds (changed):\n${dpChangedText(DP.opts, g)}` : 'Thresholds (dpa v3.5 defaults)')}">⚙${changed ? ` ${changed}` : ''}</button></div>`;
+      if (!DP.cfgOpen.has(g)) continue;
+      h += '<div class="dp-cfg">';
+      for (const s of Dpa.SETTINGS.filter((x) => x.group === g && Dpa.settingActive(x, DP.opts))) {
+        const b = DP.optBad[s.key], unit = s.unit || '%';
+        if (s.choices) {
+          h += `<span class="cl">${esc(s.label)}</span>
+            <select data-opt="${s.key}" class="${DP.opts[s.key] !== s.def ? 'chg' : ''}" title="dpa v3.5 default: ${esc(dpOptText(s, s.def))}">
+              ${s.choices.map(([v, t]) => `<option value="${esc(v)}"${v === DP.opts[s.key] ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
+          continue;
+        }
+        h += `<span class="cl">${esc(s.label)}</span>
+          <input type="text" data-opt="${s.key}" value="${esc(b ? b.text : String(DP.opts[s.key]))}" spellcheck="false"
+            class="${b ? 'bad' : DP.opts[s.key] !== s.def ? 'chg' : ''}" title="${esc(b ? b.msg : `dpa v3.5 default: ${s.def} ${unit}`)}"><span class="lbl">${unit}</span>`;
+      }
+      h += `</div><div class="dp-cfgbar">${changed || bad ? `<button type="button" class="btn small" data-reset="${g}">Defaults (v3.5)</button>` : '<span class="lbl">dpa v3.5 defaults</span>'}
+        <span class="lbl">% of the signal's swing at the switching event</span></div>`;
+    }
+    h += '</div></div>';
+
+    const n = ticked.length, badOpt = Object.keys(DP.optBad).length > 0;
+    h += `<div class="dp-step"><h4><span class="n">4</span>Extract</h4><div class="dp-go">
+      <button class="btn primary" data-act="extract"${DP.run || !n || !DP.groups.size || badOpt ? ' disabled' : ''}
+        ${badOpt ? 'title="Correct the threshold outlined in red first"' : ''}>Extract ${n ? `${n} capture${n > 1 ? 's' : ''}` : ''}</button>
+      <select data-act="frames" title="Which frames of FastFrame captures to analyse">
+        <option value="all">All frames</option><option value="shown"${DP.frames === 'shown' ? ' selected' : ''}>Frames shown only</option></select></div>
+      <div class="lbl" style="margin-top:6px">The Δt shifts of loaded waveforms are applied, e.g. to deskew Is against Vd.</div></div>`;
+
+    if (h === DP.setupHtml) return;   // keep an open dropdown undisturbed
+    DP.setupHtml = h;
+    const host = $('#dpSetup'), list = $('.dp-files', host);
+    const top = host.scrollTop, listTop = list ? list.scrollTop : 0;
+    host.innerHTML = h;
+    host.scrollTop = top;
+    if ($('.dp-files', host)) $('.dp-files', host).scrollTop = listTop;
+  }
+
+  function renderDpRun() {
+    const run = DP.run;
+    $('#dpRun').innerHTML = run
+      ? `<span>Extracting ${Math.min(run.done + 1, run.total)} of ${run.total}…</span><button type="button" class="btn small" data-act="stop">Stop</button>`
+      : DP.results.length ? `<span>${DP.results.length} result${DP.results.length > 1 ? 's' : ''}</span>${dpOptsStale()
+        ? '<span class="warn" title="The results were extracted with other thresholds">Thresholds changed: Extract again</span>' : ''}` : '';
+    $('#dpCsv').disabled = !DP.results.length;
+  }
+
+  function renderDpResults() {
+    const host = $('#dpResults');
+    if (!DP.results.length) {
+      host.innerHTML = `<div class="hint">${DP.run ? 'Extracting…' : 'Results appear here, one row per capture (and frame). Click a row to view its extraction windows on the plot, then Download CSV.'}</div>`;
+      return;
+    }
+    const groups = DP.cols.map((g) => [g, Dpa.PARAMETERS[g]]);
+    const multi = DP.results.some((r) => r.nF > 1);
+    const cell = (v, first) => `<td class="${first ? 'gs' : ''}${isFinite(v) ? '' : ' nan'}">${isFinite(v) ? esc(dpNum(v)) : '—'}</td>`;
+    let h = `<table><thead><tr><th class="c0"></th>${multi ? '<th></th>' : ''}<th class="g" colspan="${Dpa.CONDITIONS.length}">Test conditions</th>`;
+    for (const [g, p] of groups) {
+      const custom = DP.runOpts && dpChanged(DP.runOpts, g).length;
+      h += `<th class="g" colspan="${p.columns.length}" style="color:${dpColor(g)}"${custom ? ` title="${esc(`Extracted with changed thresholds:\n${dpChangedText(DP.runOpts, g)}`)}"` : ''}>${esc(p.label)}${custom ? ' ⚙' : ''}</th>`;
+    }
+    h += `<th class="g"></th></tr><tr><th class="c0">File</th>${multi ? '<th>Frame</th>' : ''}`;
+    for (const c of Dpa.CONDITIONS) h += `<th>${esc(c)}</th>`;
+    for (const [, p] of groups) for (const c of p.columns) h += `<th>${esc(dpCol(c))}</th>`;
+    h += '<th style="text-align:left">Issues</th></tr></thead><tbody>';
+    DP.results.forEach((r, i) => {
+      const issues = Object.entries(r.errors).map(([g, m]) => `${dpGroupName(g)}: ${m}`);
+      const cls = r === dpPrimary() ? 'on prim' : DP.view.includes(r) ? 'on' : '';
+      h += `<tr data-i="${i}"${cls ? ` class="${cls}"` : ''} title="${esc(r.rec.path)} · click to view the extraction windows, Ctrl+click to overlay it">
+        <td class="c0">${esc(r.rec.alias)}</td>${multi ? `<td>${r.frame + 1}</td>` : ''}`;
+      Dpa.CONDITIONS.forEach((c, k) => { h += cell(r.conditions[c], k === 0); });
+      for (const [, p] of groups) p.columns.forEach((c, k) => { h += cell(r.values[c], k === 0); });
+      h += `<td class="iss gs" title="${esc(issues.join('\n'))}">${esc(issues.join(' · '))}</td></tr>`;
+    });
+    // Last row: the average of every column over the results that have a value in it.
+    const m = DP.results.length;
+    let partial = false;
+    const avgCell = (key, part, first) => {
+      const { mean, n } = dpAverage(key, part);
+      if (n < m) partial = true;
+      return `<td class="${first ? 'gs' : ''}${n ? '' : ' nan'}" title="Mean of ${n} of ${m} result${m > 1 ? 's' : ''}">${n ? esc(dpNum(mean)) : '—'}</td>`;
+    };
+    h += `</tbody><tfoot><tr><td class="c0">Average <span class="lbl">(${m})</span></td>${multi ? '<td></td>' : ''}`;
+    Dpa.CONDITIONS.forEach((c, k) => { h += avgCell(c, 'conditions', k === 0); });
+    for (const [, p] of groups) p.columns.forEach((c, k) => { h += avgCell(c, 'values', k === 0); });
+    h += `<td class="iss gs">${partial ? 'Empty values are left out of the average (hover a value for its count)' : ''}</td></tr></tfoot>`;
+    host.innerHTML = h + '</table>';
+  }
+
+  /** Mean of a column (`part`: 'values' or 'conditions') over the results that have a number there, and how many. */
+  function dpAverage(key, part) {
+    let sum = 0, n = 0;
+    for (const r of DP.results) { const v = r[part][key]; if (isFinite(v)) { sum += v; n++; } }
+    return { mean: n ? sum / n : NaN, n };
+  }
+
+  /** Id of the trace showing `role` of a result (whether or not it is drawn now), or null. */
+  function dpTraceId(r, role) {
+    if (r.rec.status !== 'ready' || !r.roles[role]) return null;
+    const ch = r.rec.cap.channels.find((c) => !c.math && c.label === r.roles[role]);
+    return ch ? `${r.rec.id}|${ch.key}|${r.frame}` : null;
+  }
+
+  /** Where a mark found on the deskewed Is sits on the Is waveform itself: earlier by the deskew. */
+  const dpDeskew = (r, role) => (role === 'is' && r.isDeskew ? -r.isDeskew : 0);
+
+  /** How far the waveform of `role` was moved (its own Δt) since the extraction. */
+  function dpMoved(r, role) {
+    const id = dpTraceId(r, role), st = id && S.ts.get(id);
+    return st && r.base[role] !== undefined ? st.offset - r.base[role] : 0;
+  }
+
+  /** "file Is, …" for the shown results whose waveforms moved relative to each other since the extraction. */
+  function dpStale() {
+    const out = [];
+    for (const r of DP.view) {
+      const moved = Object.keys(r.base).filter((role) => Math.abs(dpMoved(r, role)) > 1e-15);
+      if (moved.length) out.push(`${r.rec.alias} ${moved.map(Dpa.roleName).join(', ')}`);
+    }
+    return out.join('; ');
+  }
+
+  function renderDpView() {
+    const host = $('#dpView'), view = DP.view, prim = dpPrimary();
+    DP.staleKey = dpStale();
+    if (!view.length) { host.innerHTML = ''; return; }
+    const multi = view.length > 1;
+    const groups = DP.cols.filter((g) => view.some((r) => r.markers.some((m) => m.group === g) || r.windows.some((w) => w.group === g)));
+    const swatch = (r) => {
+      const t = S.byId.get(dpTraceId(r, 'vd'));
+      return `<i style="background:${t ? t.color : 'var(--muted)'}"></i>`;
+    };
+    // In an overlay marks take their waveform's colour, so the parameter groups differ by dash pattern.
+    const dash = (g) => `<svg width="18" height="8"><line x1="0" y1="4" x2="18" y2="4" stroke="${multi ? 'currentColor' : dpColor(g)}" stroke-width="2"
+      stroke-dasharray="${DP_DASH[g].join(' ') || 'none'}"/></svg>`;
+    host.innerHTML = `<span class="lbl">Extraction windows of</span>
+      ${view.map((r) => `<span class="chip vfile${multi && r === prim ? ' on' : ''}" data-file="${DP.results.indexOf(r)}"
+        title="${esc(r.rec.path)}${multi ? (r === prim ? ' · its marks are labelled' : ' · click to label its marks') : ''}">${multi ? swatch(r) : ''}${esc(r.rec.alias)}${r.nF > 1 ? ` · F${r.frame + 1}` : ''}${multi ? '<button type="button" class="xbtn" data-drop title="Remove from the plot">×</button>' : ''}</span>`).join('')}
+      ${view.some((r) => r.events) ? `<button class="btn small" data-zoom="R1" title="Zoom to the 1st turn-off (hard turn-off at peak current)">Turn-off</button>
+      <button class="btn small" data-zoom="F2" title="Zoom to the 2nd turn-on (hard turn-on)">Turn-on</button>` : ''}
+      <button class="btn small" data-zoom="all" title="Show the whole record">Whole record</button>
+      ${groups.length ? `<span class="lbl">Show</span>${groups.map((g) => `<span class="chip${DP.show.has(g) ? ' on' : ''}" data-show="${g}" title="Show or hide these marks">
+        ${dash(g)}${esc(Dpa.PARAMETERS[g].label)}</span>`).join('')}` : '<span class="lbl">No extraction points: see Issues</span>'}
+      ${groups.length && !groups.some((g) => DP.show.has(g)) ? '<span class="lbl">Click a parameter to show its extraction windows</span>' : ''}
+      ${multi ? '' : '<span class="lbl">Ctrl+click rows to overlay more files</span>'}
+      ${DP.staleKey ? `<span class="warn" title="Waveforms moved relative to each other since the extraction: ${esc(DP.staleKey)}.\nThe marks follow them, the values do not.">Moved since extraction: values not updated, Extract again</span>` : ''}
+      <button type="button" class="xbtn" data-act="hide" title="Remove the marks from the plot">×</button>`;
+  }
+
+  /** Frame f of channel ch (V or A, float64) on the capture's time grid, shifted by the channel's Δt if `rec` is loaded. */
+  function dpSamples(rec, ch, f, info) {
+    const w = ch.wfm, raw = w.frames[f], n = info.samples, out = new Float64Array(n);
+    const st = rec && S.ts.get(`${rec.id}|${ch.key}|${f}`);
+    const off = st ? st.offset : 0;
+    if (!off && raw.length === n && Math.abs(w.tstart - info.tstart) < info.tstep * 1e-6 && Math.abs(w.tstep - info.tstep) < info.tstep * 1e-9) {
+      for (let i = 0; i < n; i++) out[i] = raw[i] * w.vscale + w.voffset;
+      return out;
+    }
+    const s = new Series(raw, w.vscale, w.voffset, w.tstart, w.tstep);
+    for (let i = 0; i < n; i++) out[i] = s.valueAt(Math.max(s.tstart, Math.min(s.tend, info.tstart + info.tstep * i - off)));
+    return out;
+  }
+
+  /**
+   * What a result keeps of an analysis: numbers, and the marks and windows to draw (no waveforms).
+   * `base` is each role's Δt shift at extraction: moving a waveform later moves its marks by the difference.
+   */
+  function dpResult(rec, frame, nF, trig, roles, base, res) {
+    const ev = res.dp ? res.dp.events : null, markers = [], windows = [];
+    const nearest = (t) => (Math.abs(t - ev.R1) <= Math.abs(t - ev.F2) ? 'R1' : 'F2');
+    if (res.dp) {
+      for (const [g, list] of Object.entries(res.dp.markers)) for (const m of list) markers.push({ group: g, ...m, ev: nearest(m.t) });
+      for (const [g, list] of Object.entries(res.dp.windows)) for (const w of list) windows.push({ group: g, ...w });
+    }
+    return { rec, frame, nF, trig, roles, base, values: res.values, errors: res.errors, conditions: res.conditions, events: ev, markers, windows };
+  }
+
+  async function extractDp() {
+    if (DP.run) return;
+    const recs = S.files.filter((f) => DP.ticked.has(f.id));
+    const groups = Dpa.DEFAULT_PARAMETERS.filter((g) => DP.groups.has(g));
+    if (!recs.length || !groups.length) { status('Tick the captures and the parameters to extract first'); return; }
+    const run = DP.run = { stop: false, done: 0, total: recs.length };
+    const opts = { ...DP.opts };
+    DP.results = []; DP.cols = groups; DP.view = []; DP.runOpts = opts;
+    DP.zoomEv = 'all'; DP.show = new Set();
+    setDpMarks();
+    renderDp();
+    const tick = () => new Promise((r) => setTimeout(r, 0));   // let the page repaint
+    for (const rec of recs) {
+      if (run.stop) break;
+      await tick();
+      const live = rec.status === 'ready';
+      try {
+        const cap = live ? rec.cap : await Tss.open(rec.blob, S.corrections.get(rec.dir) || {});
+        const labels = cap.channels.filter((c) => !c.math).map((c) => c.label);
+        if (!live) DP.labels.set(rec.id, labels);
+        const roles = dpRoles(labels), chans = {};
+        for (const [role, label] of Object.entries(roles)) {
+          if (!label) continue;
+          chans[role] = cap.channels.find((c) => !c.math && c.label === label);
+          await cap.loadChannel(chans[role]);
+        }
+        const info = cap.info;
+        let nF = info.frameCount;
+        for (const ch of Object.values(chans)) nF = Math.min(nF, ch.wfm.frameCount);
+        const frames = DP.frames === 'shown' ? [...rec.selFrames].filter((f) => f < nF).sort((a, b) => a - b) : Array.from({ length: nF }, (_, f) => f);
+        for (const f of frames) {
+          if (run.stop) break;
+          const raw = {}, base = {};
+          for (const [role, ch] of Object.entries(chans)) {
+            raw[role] = dpSamples(live ? rec : null, ch, f, info);
+            const st = live && S.ts.get(`${rec.id}|${ch.key}|${f}`);
+            base[role] = st ? st.offset : 0;
+          }
+          const res = Dpa.analyze({ t0: info.tstart, tstep: info.tstep, n: info.samples, raw }, groups, opts);
+          // marks found on the deskewed Is are drawn on the Is waveform itself, i.e. earlier by the deskew
+          DP.results.push(Object.assign(dpResult(rec, f, nF, info.frameTimes[f], roles, base, res), { isDeskew: opts.isDeskew * 1e-9 }));
+          renderDpResults();
+          if (frames.length > 1) await tick();
+        }
+      } catch (err) {
+        console.error(err);
+        const msg = err.message || String(err);
+        DP.results.push(dpResult(rec, 0, 1, NaN, {}, {}, { values: {}, errors: { read: msg }, conditions: {}, dp: null }));
+      }
+      run.done++;
+      renderDpRun();
+      renderDpResults();
+    }
+    DP.run = null;
+    renderDp();
+    const failed = DP.results.filter((r) => Object.keys(r.errors).length).length;
+    status(`${run.stop ? 'Stopped: ' : ''}extracted ${run.done} of ${recs.length} capture${recs.length > 1 ? 's' : ''}` +
+      `${failed ? `; ${failed} result${failed > 1 ? 's have' : ' has'} issues (see the Issues column)` : ''}. Click a row to view its extraction windows.`, 10000);
+  }
+
+  /**
+   * Show results on the plot: only their captures and frames, with the assigned channels and the marks.
+   * A plain click shows one result; `add` (Ctrl/Shift+click) overlays it on those shown, or removes it if shown.
+   */
+  async function viewDp(r, add = false) {
+    if (!S.files.includes(r.rec)) return;
+    if (!add) DP.view = [r];
+    else if (DP.view.includes(r) && DP.view.length > 1) DP.view = DP.view.filter((x) => x !== r);
+    else DP.view = DP.view.filter((x) => x !== r).concat(r);
+    const view = DP.view;
+    renderDpView(); renderDpResults();
+    const recs = [...new Set(view.map((x) => x.rec))];
+    for (const f of S.files) if (!recs.includes(f)) f.selFrames = new Set();
+    for (const rec of recs) {
+      const mine = view.filter((x) => x.rec === rec);
+      rec.selFrames = new Set(mine.map((x) => x.frame));
+      rec.open = true;
+      if (rec.status !== 'ready') { status(`Loading ${rec.alias}…`); await loadFile(rec); }
+      if (DP.view !== view) return;
+      const want = mine.flatMap((x) => Object.values(x.roles)).filter(Boolean);
+      if (rec.status === 'ready' && want.length) rec.selCh = new Set(want);
+    }
+    renderFiles();
+    for (const rec of recs) if (rec.status === 'ready') await ensureChannels(rec);
+    if (DP.view !== view) return;
+    setDpMarks();
+    renderDpView();   // swatches need the traces
+    zoomDp(DP.zoomEv);
+  }
+
+  /**
+   * Draw the marks of the shown results, or remove them. A mark sits at its analysis time plus the file's shift plus
+   * how far its own waveform was moved since the extraction, so it stays on the waveform when that is dragged.
+   */
+  function setDpMarks() {
+    const view = dpPanel.hidden ? [] : DP.view.filter((r) => S.files.includes(r.rec) && r.rec.status === 'ready');
+    if (DP.staleKey !== dpStale()) renderDpView();
+    if (!view.length) {
+      if (plot.marks) { plot.marks = null; plot.redraw(); }
+      return;
+    }
+    const multi = view.length > 1, prim = dpPrimary(), bands = [], lines = [];
+    for (const r of view) {
+      const at = (t, role) => t + r.rec.offset + dpMoved(r, role) + dpDeskew(r, role);
+      const labelled = r === prim;
+      for (const w of r.windows) {
+        if (!DP.show.has(w.group)) continue;
+        const role = w.group === 'Qg' ? 'ig' : 'vd';   // the window moves with the signal it integrates (Vd for Vd*Is)
+        bands.push({
+          a: at(w.t0, role), b: at(w.t1, role), color: multi ? null : dpColor(w.group), traceId: dpTraceId(r, role),
+          label: labelled ? `${w.name} ${isFinite(w.value) ? `${dpNum(w.value)} ${w.unit}` : '—'}` : '',
+        });
+      }
+      for (const m of r.markers) {
+        if (!DP.show.has(m.group)) continue;
+        lines.push({ t: at(m.t, m.role), label: labelled ? m.name : '', color: multi ? null : dpColor(m.group), dash: DP_DASH[m.group], traceId: dpTraceId(r, m.role) });
+      }
+    }
+    plot.marks = { bands, lines };
+    plot.redraw();
+  }
+
+  /**
+   * Zoom to the switching event 'R1' (turn-off) or 'F2' (turn-on) of every shown result: around the switching marks,
+   * as the dpa inspector does. Gate-charge windows can last microseconds, so they do not widen the view.
+   */
+  function zoomDp(ev) {
+    if (!DP.view.length) return;
+    DP.zoomEv = ev;
+    for (const p of plot.panes) p.yAuto = true;
+    let lo = Infinity, hi = -Infinity;
+    if (ev !== 'all') {
+      for (const r of DP.view) {
+        if (!r.events) continue;
+        const ts = r.markers.filter((m) => m.ev === ev && m.group !== 'Qg').map((m) => m.t + dpMoved(r, m.role) + dpDeskew(r, m.role));
+        for (const t of ts.concat(r.events[ev] + dpMoved(r, 'vd'))) { lo = Math.min(lo, t + r.rec.offset); hi = Math.max(hi, t + r.rec.offset); }
+      }
+    }
+    if (!(hi >= lo)) { plot.fitX(); return; }
+    const w = Math.max(hi - lo, 40e-9);
+    plot.setView(lo - 0.5 * w, hi + 0.8 * w);
+  }
+
+  /** Every result in one CSV, one row per file and frame, with the file's test conditions (dpa batch format). */
+  function exportDpCsv() {
+    if (!DP.results.length) { status('Nothing to download: extract the parameters first'); return; }
+    const recs = [];
+    for (const r of DP.results) if (!recs.includes(r.rec)) recs.push(r.rec);
+    const keys = condKeys(recs);
+    const cols = DP.cols.flatMap((g) => Dpa.PARAMETERS[g].columns);
+    const now = new Date(), p2 = (v) => String(v).padStart(2, '0');
+    const lines = [
+      `# Generated Time: ${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())} ${p2(now.getHours())}:${p2(now.getMinutes())}:${p2(now.getSeconds())}`,
+      `# Double pulse algorithm version: ${Dpa.VERSION} (dpa, config-free; TSS Viewer)`,
+      `# Parameters: ${DP.cols.join(', ')}`,
+      `# Thresholds (* = changed from the dpa defaults): ${Dpa.SETTINGS.filter((x) => DP.cols.includes(x.group) && Dpa.settingActive(x, DP.runOpts))
+        .map((x) => `${x.key}=${DP.runOpts[x.key]}${x.choices ? '' : x.unit === 'ns' ? 'ns' : '%'}${DP.runOpts[x.key] !== x.def ? '*' : ''}`).join(', ')}`,
+      `# Channels: ${Dpa.ROLES.map((x) => `${x.name}=${DP.roles[x.key] === 'auto' ? 'auto' : DP.roles[x.key] || 'not used'}`).join(', ')}`,
+      '# Failed extractions are left empty (NaN) and explained in the \'error\' column',
+      '# ------------------------------------------------',
+      ['file path', 'file name', ...keys, 'frame', 'trigger time [s]', ...Dpa.CONDITIONS, ...cols,
+        ...Dpa.ROLES.map((x) => `${x.name} channel`), 'time shifts', 'error'].map(csvQ).join(','),
+    ];
+    for (const r of DP.results) {
+      const shifts = Object.entries(r.base).filter(([, v]) => v).map(([k, v]) => `${r.roles[k]} ${Units.fmt(v, 's', 6)}`).join('; ');
+      const err = Object.entries(r.errors).map(([g, m]) => `${g}: ${m}`).join('; ');
+      lines.push([csvQ(r.rec.dir), csvQ(r.rec.name), ...keys.map((k) => csvQ(condVal(r.rec, k))), r.frame + 1, csvNum(r.trig),
+        ...Dpa.CONDITIONS.map((c) => csvNum(r.conditions[c])), ...cols.map((c) => csvNum(r.values[c])),
+        ...Dpa.ROLES.map((x) => csvQ(r.roles[x.key] || '')), csvQ(shifts), csvQ(err)].join(','));
+    }
+    // Last row: the average of every column over the results that have a value in it (as in the table).
+    lines.push(['', 'Average', ...keys.map(() => ''), '', '', ...Dpa.CONDITIONS.map((c) => csvNum(dpAverage(c, 'conditions').mean)),
+      ...cols.map((c) => csvNum(dpAverage(c, 'values').mean)), ...Dpa.ROLES.map(() => ''), '',
+      csvQ(`mean of ${DP.results.length} results; empty values are left out`)].join(','));
+    downloadCsv('double-pulse-parameters.csv', lines);
+    status(`Saved double-pulse-parameters.csv: ${recs.length} file${recs.length > 1 ? 's' : ''}, ${DP.results.length} rows + average`);
+  }
+
+  function toggleDp(open = dpPanel.hidden) {
+    if (open && !tpanel.hidden) toggleTrends(false);
+    dpPanel.hidden = !open;
+    $('#btnDp').classList.toggle('on', open);
+    renderDp();
+    setDpMarks();
+  }
+
+  $('#btnDp').addEventListener('click', () => toggleDp());
+  $('#dpClose').addEventListener('click', () => toggleDp(false));
+  $('#dpCsv').addEventListener('click', exportDpCsv);
+  $('#dpRun').addEventListener('click', (e) => { if (e.target.dataset.act === 'stop' && DP.run) DP.run.stop = true; });
+
+  $('#dpSetup').addEventListener('click', (e) => {
+    const b = e.target.closest('button'), act = b && b.dataset.act;
+    if (b && b.dataset.cfg) {
+      if (DP.cfgOpen.has(b.dataset.cfg)) DP.cfgOpen.delete(b.dataset.cfg); else DP.cfgOpen.add(b.dataset.cfg);
+    } else if (b && b.dataset.reset) {
+      for (const s of Dpa.SETTINGS) if (s.group === b.dataset.reset) { DP.opts[s.key] = s.def; delete DP.optBad[s.key]; }
+      saveDp();
+    } else if (act === 'all') S.files.forEach((f) => DP.ticked.add(f.id));
+    else if (act === 'none') DP.ticked.clear();
+    else if (act === 'extract') { extractDp(); return; }
+    else return;
+    renderDp();
   });
+
+  $('#dpSetup').addEventListener('change', (e) => {
+    const t = e.target, d = t.dataset;
+    if (d.tick !== undefined) { if (t.checked) DP.ticked.add(+d.tick); else DP.ticked.delete(+d.tick); }
+    else if (d.role !== undefined) DP.roles[d.role] = t.value;
+    else if (d.group !== undefined) { if (t.checked) DP.groups.add(d.group); else DP.groups.delete(d.group); }
+    else if (d.act === 'frames') DP.frames = t.value;
+    else if (d.opt !== undefined) {
+      // A value is taken only if every threshold is still usable (e.g. a lower level stays below the upper one).
+      const s = Dpa.SETTINGS.find((x) => x.key === d.opt), text = t.value.trim();
+      const next = { ...DP.opts, [d.opt]: s.choices ? t.value : text === '' ? NaN : Number(text.replace(',', '.')) };
+      const bad = Dpa.checkSettings(next);
+      if (Object.keys(bad).length) DP.optBad[d.opt] = { text: t.value, msg: `Not used: ${bad[d.opt] || Object.values(bad)[0]}` };
+      else { DP.opts = next; DP.optBad = {}; }
+    }
+    saveDp();
+    renderDp();
+  });
+  $('#dpSetup').addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('input[type=text]')) e.target.blur(); });
+
+  $('#dpResults').addEventListener('click', (e) => {
+    const row = e.target.closest('tr[data-i]');
+    if (row) viewDp(DP.results[+row.dataset.i], e.ctrlKey || e.metaKey || e.shiftKey);
+  });
+  // Shift+click would otherwise select the table text.
+  $('#dpResults').addEventListener('mousedown', (e) => { if (e.shiftKey && e.target.closest('tr[data-i]')) e.preventDefault(); });
+
+  $('#dpView').addEventListener('click', (e) => {
+    const z = e.target.closest('[data-zoom]'), s = e.target.closest('[data-show]'), f = e.target.closest('[data-file]');
+    if (z) zoomDp(z.dataset.zoom);
+    else if (s) {
+      if (DP.show.has(s.dataset.show)) DP.show.delete(s.dataset.show); else DP.show.add(s.dataset.show);
+      renderDpView(); setDpMarks();
+    } else if (f) {
+      const r = DP.results[+f.dataset.file];
+      if (e.target.closest('[data-drop]')) { viewDp(r, true); return; }
+      DP.view = DP.view.filter((x) => x !== r).concat(r);   // label this file's marks
+      renderDpView(); renderDpResults(); setDpMarks();
+    } else if (e.target.dataset.act === 'hide') {
+      DP.view = [];
+      renderDpView(); renderDpResults(); setDpMarks();
+    }
+  });
+
+  /** Drag the top edge of a bottom panel to resize it. */
+  function bindPanelSplit(handle, panel, min) {
+    handle.addEventListener('pointerdown', (e) => {
+      const sy = e.clientY, h0 = panel.getBoundingClientRect().height;
+      const max = $('#plotWrap').getBoundingClientRect().height - 80;
+      const move = (ev) => { panel.style.height = `${Math.max(min, Math.min(max, h0 - (ev.clientY - sy)))}px`; };
+      const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+      e.preventDefault();
+    });
+  }
+  bindPanelSplit($('#trendSplit'), tpanel, 160);
+  bindPanelSplit($('#dpPanel .psplit'), dpPanel, 200);
 
   // Side panels: drag the inner edge to resize, double-click to reset. Widths are remembered.
   const SPLIT_MIN = 140;
@@ -1607,6 +2318,7 @@
     plot.refreshTheme();
     trend.refreshTheme();
     rebuild();
+    setDpMarks(); renderDp();
   });
   $('#btnHelp').addEventListener('click', () => $('#help').showModal());
 
@@ -1617,7 +2329,15 @@
 
   document.addEventListener('keydown', (e) => {
     if (e.target.matches('input, select, textarea') || $('#help').open || mdlg.open || cdlg.open) return;
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && S.selected) {
+      // move the selected waveform up/down by one pixel (Shift: 10) on its pane's axis, which stays still
+      const t = S.byId.get(S.selected), p = t && plot.paneOf(t);
+      if (!p) return;
+      e.preventDefault();
+      p.yAuto = false;
+      const step = ((p.y1 - p.y0) / p.rect.h) * (e.shiftKey ? 10 : 1);
+      setLevel(t, t.st.yGain, t.st.yOff + (e.key === 'ArrowUp' ? step : -step));
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       const t = S.selected && S.byId.get(S.selected);
       if (!t) return;
       e.preventDefault();
@@ -1627,6 +2347,7 @@
     } else if (e.key === 'f' || e.key === 'F') plot.fitAll();
     else if (e.key === 'c' || e.key === 'C') plot.setCursors(!plot.cursors);
     else if (e.key === 't' || e.key === 'T') toggleTrends();
+    else if (e.key === 'd' || e.key === 'D') toggleDp();
     else if (e.key === 'z' || e.key === 'Z') setMode(plot.mode === 'zoom' ? 'pan' : 'zoom');
     else if (e.key === 'Escape') onSelect(null);
   });
@@ -1643,6 +2364,7 @@
 
   loadMaths();
   loadTrends();
+  loadDp();
   renderFiles();
   renderTraces();
 

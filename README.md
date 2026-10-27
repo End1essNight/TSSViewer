@@ -121,9 +121,21 @@ If the repository is private, Pages availability depends on your GitHub plan.
 - **Frames (FastFrame):** type `1-5, 8` or click the frame buttons. Alt+click selects one frame only.
 - **Panes:** one per channel (overlays the same signal from every file), one per file, one per frame, or a single pane.
 - **Time shift:**
-  - Drag a waveform left or right. *Dragging moves* sets whether only that waveform moves or the whole file.
+  - Drag a waveform left or right. *Dragging moves* sets whether the whole file moves (the default) or only that waveform.
   - Or type a shift in the waveform's Δt box or the file's *Shift* box: `12.5n`, `-3 us`, `1e-9`, `40 samples`.
   - ←/→ nudges the selected waveform by 1 sample (Shift: 10 samples, Alt: 1 pixel).
+- **Overlay, level and scale** (display only: readouts, cursors, math, trends and double-pulse values use the real values):
+  - Select a waveform (click it or its row on the right). Its row shows the level controls.
+  - **Overlay on another channel's pane** (*Panes: One per channel*): pick *In Vd* (or another channel) to draw
+    it in that pane, scaled to fit. Example: make a math channel `diff(Is)` (or `smooth(diff(Is), 1n)`), select it
+    and pick *In Vd* to compare dI/dt with the Vd edge. The pane keeps Vd's axis and unit, and its title lists
+    the overlaid channels.
+  - **Move it vertically:** drag the waveform up or down (the first few pixels decide: sideways shifts time,
+    up/down moves the level), or use ↑/↓ (1 pixel, Shift: 10). The pane's axis then stays fixed (*Y locked*);
+    double-click to fit again.
+  - **Scale:** Alt+wheel over the plot scales the selected waveform about the mouse position, or type the scale
+    (`×`, e.g. `5e-9`, `10n`) and offset (`+`, in the pane's unit). *Fit* scales and moves it to fill the pane
+    over the shown time span. *0* returns it to its own pane with scale 1 and offset 0.
 - **Navigate:**
   - Wheel zooms time; Shift+wheel or wheel over the Y axis zooms Y.
   - Drag the background to pan; Shift+drag or *Box zoom* zooms to a box.
@@ -150,6 +162,53 @@ If the repository is private, Pages availability depends on your GitHub plan.
     so a whole folder fits in memory. The results are plotted with the loaded files; click a point
     to load that file at that frame. These files have no time shifts. After adding or changing a
     measurement, click *Measure again*.
+- **Double pulse** (*Double pulse* or `D`): extract double-pulse switching parameters with the
+  config-free `dpa` algorithm, version 3.5 (ported from `double-pulse-analytics/dpa/analysis.py`, same results).
+  1. **Captures:** tick the double-pulse files among the listed files. A file is ticked when first listed if it
+     has a Vd channel. Files that are not loaded are opened just for the extraction.
+  2. **Channels:** assign Vd (required), Vg, Is, Ig and Vgi (optional). *Auto* finds them by their usual
+     names (`Vd`/`Vds`, `Vg`/`VGO_LS`, `Is`/`Id`, `Ig`, `Vgi`, case-insensitive). Next to each one you can see
+     which channel it uses in the ticked files, and in how many files it is missing.
+  3. **Parameters:** switching times (tdon, tf, tdoff, tr; needs Vg), switching energy (Eon, Eoff; needs Is),
+     gate charge (Qgoff, Qgon; needs Vg and Ig), dV/dt and dIs/dt (10–90 % and peak), and Vd turn-off overshoot.
+     - **Thresholds:** click ⚙ next to a parameter to change its thresholds, e.g. the Vd upper level for
+       switching times from 90 % to 85 %. Percentages are of each signal's 0–100 % swing at the switching event.
+       The editable thresholds are:
+       - Switching times: the Vg and Vd levels.
+       - Energy: **Is deskew** (default 0 ns), signed like the Δt boxes: a positive value moves Is later (to the
+         right), so a deskew of +1 ns gives the same values as a Δt of +1 ns on the Is waveform. It adds to that Δt.
+         It applies to every parameter that uses Is, the switching energy above all. Note: dpa's `deskew_ns` has the
+         opposite sign (dpa `deskew_ns = 1.3` is `-1.3` here). Marks found on Is are drawn on the Is waveform itself.
+       - Energy: where Eon/Eoff start and end. Eoff ends on Is (0 %, the default) or on Vd (e.g. 99 %).
+         Ending on Vd leaves out the current tail after Vd has risen, so Eoff is smaller.
+       - Gate charge: where Qg starts and ends, and the Ig-settled band.
+       - dV/dt and dIs/dt: the upper and lower levels.
+       - Vd overshoot: where the peak search starts, and how long it lasts.
+
+       Changed values are highlighted and counted on the ⚙ button, and *Defaults (v3.5)* restores them.
+       The thresholds are remembered between sessions. Result columns keep their standard names
+       (e.g. `dV/dt_on_90_10`) whatever the levels. The CSV header lists every threshold used, with `*` on the
+       changed ones. When the thresholds change after an extraction, the panel says *Thresholds changed: Extract again*.
+  4. **Extract:** one result row per file (and per frame for FastFrame captures, or only the frames shown).
+     The last row, *Average*, is the mean of each column over the results that have a value in it (hover a value for the count).
+     The Δt shifts of loaded waveforms are applied, so you can deskew Is against Vd before extracting.
+     A value that cannot be extracted is left empty and the *Issues* column says why.
+  5. **View extraction windows:** click a result row to show that capture alone. It first shows the whole
+     record with no marks. Click a parameter's chip to show its marks: every threshold crossing as a dashed line and
+     a dot on its waveform, and the Eon/Eoff/Qg integration windows shaded with their values. *Turn-off* / *Turn-on*
+     zoom to the hard switching events. The chips and zoom you pick stay for the next rows you click, until the
+     next extraction.
+     - **Overlay files:** Ctrl+click (or Shift+click) more rows to add them; Ctrl+click a shown row again, or the
+       × on its file chip, to remove it. In an overlay, marks take their waveform's colour and the parameters are
+       told apart by dash pattern (see the *Show* chips). Only one file's marks are labelled: the last one added,
+       or click a file chip to label that file instead.
+     - **Move waveforms:** drag a waveform (or nudge it with ←/→) to compare edges. Its marks move with it.
+       In *Whole file* mode, or with the file's *Shift* box, every mark of the file moves. When waveforms of a file
+       move relative to each other, e.g. Is against Vd, the values no longer match the plot and
+       *Moved since extraction* appears. Click *Extract* again to get values for the new deskew.
+  6. **Download CSV:** `double-pulse-parameters.csv` has one row per file and frame, with the same `#` header
+     lines as the dpa batch CSV, the test conditions, Vdc/Ioff/Ion, every parameter, the channels used,
+     time shifts and errors, and an *Average* row at the end.
 - **Measure:** `C` shows cursors A/B with Δt and each waveform's values at A and B. The legend shows each waveform's value at the mouse.
 - *PNG* saves the plot; *Scope screenshot* opens the screenshot stored in the capture.
 
@@ -167,5 +226,6 @@ edit the files and reload the page. Load order is set in `index.html`.
 | `js/series.js` | One frame of one channel, with a min/max pyramid for fast drawing of long records |
 | `js/math.js` | Math expression parser and vectorised evaluator (integ, diff, smooth, …) with unit inference |
 | `js/trend.js` | Frame trends: per-frame window measurements (mean, integral, …) and their chart |
-| `js/plot.js` | Canvas plot: stacked panes, zoom/pan, drag-to-shift, cursors |
+| `js/dpa.js` | Double-pulse parameter extraction, a port of `double-pulse-analytics/dpa/analysis.py` (v3.5) |
+| `js/plot.js` | Canvas plot: stacked panes, zoom/pan, drag-to-shift, cursors, extraction marks |
 | `js/app.js` | UI: files, channels, frames, waveform list, shifts |

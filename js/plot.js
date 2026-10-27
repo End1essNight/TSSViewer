@@ -1,12 +1,14 @@
 /*
  * Canvas waveform plot: vertically stacked panes sharing one time axis.
  *
- *   drag a waveform        shift it in time (callback onShiftDrag)
+ *   drag a waveform        sideways: shift it in time (onShiftDrag); up/down: move its level (onLevelDrag)
+ *   Alt+wheel              scale the selected waveform (onLevelScale)
  *   drag background        pan            Shift+drag / Zoom mode   box zoom
  *   wheel                  zoom time      Shift+wheel or wheel on the Y axis   zoom Y
  *   drag on the Y axis     pan Y          double-click            fit everything
  *
- * A trace is {id, series: Series, shift: seconds, color, visible, selected, name}.
+ * A trace is {id, series: Series, shift: seconds, color, visible, selected, name, yGain, yOff}; it is drawn at
+ * value * yGain + yOff on its pane's axis (display only: readouts use the value itself).
  */
 'use strict';
 
@@ -20,6 +22,10 @@ class Plot {
     this.mode = 'pan';        // 'pan' | 'zoom'
     this.cursors = null;      // {a, b} in seconds
     this.band = null;         // {a, b} highlighted time window (frame-trend measurement)
+    // Double-pulse extraction overlay: {bands: [{a, b, label, color, traceId}], lines: [{t, label, color, dash, traceId}]}.
+    // A line gets a dot on its trace and its label in the pane that holds trace `traceId` (else the top pane).
+    // Marks without a colour take their trace's colour; marks of a hidden trace are not drawn.
+    this.marks = null;
     this.hover = null;        // {x, y, t}
     this.drag = null;
     this.minPaneH = 110;
@@ -43,6 +49,27 @@ class Plot {
   }
 
   get traces() { return this.panes.flatMap((p) => p.traces); }
+
+  paneOf(tr) { return this.panes.find((p) => p.traces.includes(tr)) || null; }
+
+  /**
+   * What fitting trace `tr` to its pane needs, over the shown time span: the drawn range of the pane's other traces
+   * (or of the pane when it has none) and the raw range of `tr`.  Null if the trace is flat or not shown.
+   */
+  levelRanges(tr) {
+    const p = this.paneOf(tr), out = this._out;
+    if (!p) return null;
+    let lo = Infinity, hi = -Infinity;
+    for (const o of p.traces) {
+      if (o === tr || !o.visible) continue;
+      const [a, b] = this._idx(o, this.x0, this.x1);
+      if (this._mm(o, a, b, out)) { lo = Math.min(lo, out[0]); hi = Math.max(hi, out[1]); }
+    }
+    if (!(hi > lo)) { lo = p.y0; hi = p.y1; }
+    const [a, b] = this._idx(tr, this.x0, this.x1);
+    if (!tr.series.minMax(a, b, out) || !(out[1] > out[0])) return null;
+    return { pane: p, lo, hi, rawLo: out[0], rawHi: out[1] };
+  }
 
   /** Time extent of all visible traces including their shifts. */
   extent() {
@@ -145,13 +172,24 @@ class Plot {
     return [Math.floor((t0 - tr.shift - s.tstart) / s.tstep), Math.ceil((t1 - tr.shift - s.tstart) / s.tstep) + 1];
   }
 
+  /** A trace's value as drawn: scaled and offset by its level settings (yGain, yOff); readouts use the raw value. */
+  _lv(tr, v) { return v * (tr.yGain === undefined ? 1 : tr.yGain) + (tr.yOff || 0); }
+
+  /** Drawn min/max of a trace over sample indices [a, b) into out[0..1]; false if empty. */
+  _mm(tr, a, b, out) {
+    if (!tr.series.minMax(a, b, out)) return false;
+    const u = this._lv(tr, out[0]), w = this._lv(tr, out[1]);
+    out[0] = Math.min(u, w); out[1] = Math.max(u, w);
+    return true;
+  }
+
   _autoY(p) {
     let lo = Infinity, hi = -Infinity;
     const out = this._out;
     for (const tr of p.traces) {
       if (!tr.visible) continue;
       const [a, b] = this._idx(tr, this.x0, this.x1);
-      if (tr.series.minMax(a, b, out)) { lo = Math.min(lo, out[0]); hi = Math.max(hi, out[1]); }
+      if (this._mm(tr, a, b, out)) { lo = Math.min(lo, out[0]); hi = Math.max(hi, out[1]); }
     }
     if (!(hi >= lo)) return;
     let pad = (hi - lo) * 0.06;
@@ -169,7 +207,7 @@ class Plot {
       if (!tr.visible) continue;
       let [a, b] = this._idx(tr, tA, tB);
       if (b - a < 2) b = a + 2;
-      if (!tr.series.minMax(a, b, out)) continue;
+      if (!this._mm(tr, a, b, out)) continue;
       const yt = this.v2y(p, out[1]), yb = this.v2y(p, out[0]);
       const d = y < yt ? yt - y : y > yb ? y - yb : 0;
       // On ties prefer what is drawn on top: the selected trace, else the later one.
@@ -201,6 +239,8 @@ class Plot {
       ctx.fillStyle = T.pane;
       ctx.fillRect(r.x, r.y, r.w, r.h);
       if (this.band) this._drawBand(r);
+      if (this.marks && p === this.panes[0]) this._markTraces = new Map(this.traces.map((t) => [t.id, t]));
+      if (this.marks) this._drawMarkBands(p, p === this.panes[0]);
 
       // grid
       ctx.strokeStyle = T.grid; ctx.lineWidth = 1;
@@ -222,6 +262,7 @@ class Plot {
       ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); ctx.clip();
       const order = p.traces.filter((t) => t.visible).sort((a, b) => (a.selected ? 1 : 0) - (b.selected ? 1 : 0));
       for (const tr of order) this._drawTrace(p, tr);
+      if (this.marks) this._drawMarkLines(p);
       ctx.restore();
 
       // frame + title
@@ -265,14 +306,14 @@ class Plot {
       let [a, b] = this._idx(tr, this.x0, this.x1);
       a = Math.max(0, a - 1); b = Math.min(s.n, b + 1);
       for (let i = a; i < b; i++) {
-        const x = this.t2x(s.tstart + i * s.tstep + tr.shift), y = this.v2y(p, s.value(i));
+        const x = this.t2x(s.tstart + i * s.tstep + tr.shift), y = this.v2y(p, this._lv(tr, s.value(i)));
         if (i === a) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       }
       ctx.stroke();
       if (spp < 0.12) {   // individual samples become visible: mark them
         const d = tr.selected ? 3 : 2.4;
         for (let i = a; i < b; i++) {
-          ctx.fillRect(this.t2x(s.tstart + i * s.tstep + tr.shift) - d / 2, this.v2y(p, s.value(i)) - d / 2, d, d);
+          ctx.fillRect(this.t2x(s.tstart + i * s.tstep + tr.shift) - d / 2, this.v2y(p, this._lv(tr, s.value(i))) - d / 2, d, d);
         }
       }
       return;
@@ -284,7 +325,7 @@ class Plot {
       const lo = Math.floor(fa), hi = Math.floor(fa + spp) + 1;
       if (hi <= 0) continue;
       if (lo >= s.n) break;
-      if (!s.minMax(lo, hi, out)) continue;
+      if (!this._mm(tr, lo, hi, out)) continue;
       const x = r.x + (c + 0.5) / dpr;
       const yTop = this.v2y(p, out[1]);
       let yBot = this.v2y(p, out[0]);
@@ -303,6 +344,71 @@ class Plot {
     ctx.globalAlpha = 0.1; ctx.fillRect(xa, r.y, xb - xa, r.h);
     ctx.globalAlpha = 0.6; ctx.fillRect(xa, r.y, 1, r.h); ctx.fillRect(xb - 1, r.y, 1, r.h);
     ctx.globalAlpha = 1;
+  }
+
+  /** Shaded integration windows; their labels stack up from the bottom of the top pane. */
+  _drawMarkBands(p, labels) {
+    const ctx = this.ctx, r = p.rect;
+    const rows = [];
+    ctx.font = this.theme.font; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+    for (const b of this.marks.bands) {
+      const tr = this._markTraces.get(b.traceId);
+      if (tr && !tr.visible) continue;
+      const xa = Math.max(r.x, Math.min(r.x + r.w, this.t2x(b.a)));
+      const xb = Math.max(r.x, Math.min(r.x + r.w, this.t2x(b.b)));
+      if (xb <= xa) continue;
+      ctx.fillStyle = b.color || (tr ? tr.color : this.theme.muted);
+      ctx.globalAlpha = 0.13; ctx.fillRect(xa, r.y, xb - xa, r.h);
+      ctx.globalAlpha = 1;
+      if (!labels || !b.label) continue;
+      const w = ctx.measureText(b.label).width + 6, x = Math.min(xa + 3, r.x + r.w - w);
+      let k = rows.findIndex((right) => x > right);
+      if (k < 0) { k = rows.length; rows.push(0); }
+      rows[k] = x + w;
+      ctx.fillText(b.label, x, r.y + r.h - 3 - k * 14);
+    }
+  }
+
+  /** Dashed marker lines; in the pane of each line's trace also a dot on the trace and a label. */
+  _drawMarkLines(p) {
+    const ctx = this.ctx, r = p.rect, T = this.theme;
+    const labels = [];
+    ctx.lineWidth = 1;
+    for (const ln of this.marks.lines) {
+      const tr = this._markTraces.get(ln.traceId);
+      if (tr && !tr.visible) continue;
+      const x = Math.round(this.t2x(ln.t)) + 0.5;
+      if (x < r.x || x > r.x + r.w) continue;
+      const color = ln.color || (tr ? tr.color : T.muted);
+      ctx.strokeStyle = color; ctx.globalAlpha = 0.75; ctx.setLineDash(ln.dash || [4, 3]);
+      ctx.beginPath(); ctx.moveTo(x, r.y); ctx.lineTo(x, r.y + r.h); ctx.stroke();
+      ctx.globalAlpha = 1;
+      if (tr ? !p.traces.includes(tr) : p !== this.panes[0]) continue;   // dot and label in the trace's own pane
+      if (tr) {
+        const v = tr.series.valueAt(ln.t - tr.shift);
+        if (isFinite(v)) {
+          ctx.fillStyle = color;
+          ctx.beginPath(); ctx.arc(x, this.v2y(p, this._lv(tr, v)), 3.5, 0, 2 * Math.PI); ctx.fill();
+        }
+      }
+      if (ln.label) labels.push({ x, text: ln.label, color });
+    }
+    ctx.setLineDash([]);
+    // Stack labels in rows under the pane title so that neighbours do not overlap; when the pane has no row
+    // left a label is dropped (its line and dot stay; zoom in to separate them).
+    ctx.font = T.font; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    labels.sort((a, b) => a.x - b.x);
+    const rows = [], maxRows = Math.max(1, Math.floor((r.h - 40) / 14));
+    for (const lb of labels) {
+      const w = ctx.measureText(lb.text).width + 6;
+      const x = Math.min(lb.x + 3, r.x + r.w - w);
+      let k = rows.findIndex((right) => x > right);
+      if (k < 0) { if (rows.length >= maxRows) continue; k = rows.length; rows.push(0); }
+      rows[k] = x + w + 4;
+      const y = r.y + 22 + k * 14;
+      ctx.fillStyle = T.pane; ctx.globalAlpha = 0.8; ctx.fillRect(x, y - 1, w, 14); ctx.globalAlpha = 1;
+      ctx.fillStyle = lb.color; ctx.fillText(lb.text, x + 3, y);
+    }
   }
 
   _drawCursors(top, bottom) {
@@ -343,8 +449,11 @@ class Plot {
       ctx.strokeStyle = T.box; ctx.fillStyle = T.box; ctx.lineWidth = 1;
       ctx.globalAlpha = 0.12; ctx.fillRect(x, y, Math.abs(d.cx - d.sx), Math.abs(d.cy - d.sy));
       ctx.globalAlpha = 1; ctx.strokeRect(x + 0.5, y + 0.5, Math.abs(d.cx - d.sx), Math.abs(d.cy - d.sy));
-    } else if (d.type === 'shift') {
-      const txt = `Δt ${d.total >= 0 ? '+' : ''}${Units.fmt(d.total, 's', 5)}   (shift ${Units.fmt(d.trace.shift, 's', 6)})`;
+    } else if (d.type === 'shift' && d.axis) {
+      const u = d.pane.unit || '';
+      const txt = d.axis === 'y'
+        ? `Δ ${d.totalY >= 0 ? '+' : ''}${Units.fmt(d.totalY, u, 4)}   (offset ${Units.fmt(d.trace.yOff || 0, u, 5)})`
+        : `Δt ${d.total >= 0 ? '+' : ''}${Units.fmt(d.total, 's', 5)}   (shift ${Units.fmt(d.trace.shift, 's', 6)})`;
       ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
       const w = ctx.measureText(txt).width + 12;
       const x = Math.min(d.cx + 12, this.W - w - 4), y = Math.max(d.cy - 10, 20);
@@ -385,7 +494,8 @@ class Plot {
       if (this.mode === 'zoom' || e.shiftKey) { this.drag = { type: 'box', pane: p, sx: x, sy: y, cx: x, cy: y }; break cv; }
       const hit = this._hitTrace(p, x, y);
       if (hit) {
-        this.drag = { type: 'shift', trace: hit, lastX: x, total: 0, cx: x, cy: y };
+        // The drag direction is decided by the first few pixels: sideways shifts time, up/down moves the level.
+        this.drag = { type: 'shift', trace: hit, pane: p, axis: null, sx: x, sy: y, lastX: x, lastY: y, total: 0, totalY: 0, cx: x, cy: y };
         this.cb.onSelect && this.cb.onSelect(hit);
         this.cb.onShiftStart && this.cb.onShiftStart(hit);
         break cv;
@@ -422,9 +532,23 @@ class Plot {
     } else if (d.type === 'box') {
       d.cx = x; d.cy = y;
     } else if (d.type === 'shift') {
-      const dt = ((x - d.lastX) / w) * (this.x1 - this.x0);
-      d.lastX = x; d.cx = x; d.cy = y;
-      if (dt !== 0) { d.total += dt; this.cb.onShiftDrag && this.cb.onShiftDrag(d.trace, dt); }
+      d.cx = x; d.cy = y;
+      if (!d.axis) {
+        const ax = Math.abs(x - d.sx), ay = Math.abs(y - d.sy);
+        if (Math.max(ax, ay) < 4) return;
+        d.axis = ay > 1.5 * ax ? 'y' : 'x';
+        if (d.axis === 'y') d.pane.yAuto = false;   // keep the axis still while the waveform moves on it
+        this._updateCursorStyle(x, y);
+      }
+      if (d.axis === 'x') {
+        const dt = ((x - d.lastX) / w) * (this.x1 - this.x0);
+        d.lastX = x;
+        if (dt !== 0) { d.total += dt; this.cb.onShiftDrag && this.cb.onShiftDrag(d.trace, dt); }
+      } else {
+        const dv = -((y - d.lastY) / d.pane.rect.h) * (d.pane.y1 - d.pane.y0);
+        d.lastY = y;
+        if (dv !== 0) { d.totalY += dv; this.cb.onLevelDrag && this.cb.onLevelDrag(d.trace, dv); }
+      }
     } else if (d.type === 'cursor') {
       this.cursors[d.which] = this.x2t(x);
       this.cb.onCursors && this.cb.onCursors(this.cursors);
@@ -448,7 +572,8 @@ class Plot {
         p.y0 = a; p.y1 = b;
       }
     }
-    if (d.type === 'shift') this.cb.onShiftEnd && this.cb.onShiftEnd(d.trace, d.total);
+    if (d.type === 'shift' && d.axis === 'y') this.cb.onLevelEnd && this.cb.onLevelEnd(d.trace, d.totalY);
+    else if (d.type === 'shift') this.cb.onShiftEnd && this.cb.onShiftEnd(d.trace, d.total);
     this.redraw();
   }
 
@@ -458,7 +583,14 @@ class Plot {
     const { x, y } = this._pos(e);
     const delta = e.deltaY || e.deltaX;
     const k = Math.exp(Math.max(-1, Math.min(1, delta * (e.deltaMode ? 0.05 : 0.0015))));
-    if (e.shiftKey || x < this.M.l) {
+    const sel = e.altKey && this.traces.find((t) => t.selected && t.visible);
+    if (sel) {
+      // Alt+wheel: scale the selected waveform about the level under the mouse (its pane's axis stays still)
+      const p = this.paneOf(sel);
+      const v = y >= p.rect.y && y <= p.rect.y + p.rect.h ? this.y2v(p, y) : (p.y0 + p.y1) / 2;
+      p.yAuto = false;
+      this.cb.onLevelScale && this.cb.onLevelScale(sel, 1 / k, v);
+    } else if (e.shiftKey || x < this.M.l) {
       const p = this._paneAt(y);
       const v = this.y2v(p, y);
       p.yAuto = false;
@@ -473,10 +605,11 @@ class Plot {
 
   _updateCursorStyle(x, y) {
     let c = 'crosshair';
-    if (this.drag) c = this.drag.type === 'pan' || this.drag.type === 'ypan' ? 'grabbing' : this.drag.type === 'box' ? 'crosshair' : 'ew-resize';
+    const d = this.drag;
+    if (d) c = d.type === 'pan' || d.type === 'ypan' ? 'grabbing' : d.type === 'box' ? 'crosshair' : d.type === 'shift' && !d.axis ? 'move' : d.axis === 'y' ? 'ns-resize' : 'ew-resize';
     else if (this._hitCursor(x)) c = 'ew-resize';
     else if (x < this.M.l) c = 'ns-resize';
-    else if (this.mode !== 'zoom' && this._hitTrace(this._paneAt(y), x, y)) c = 'ew-resize';
+    else if (this.mode !== 'zoom' && this._hitTrace(this._paneAt(y), x, y)) c = 'move';
     else if (this.mode !== 'zoom') c = 'grab';
     this.cv.style.cursor = c;
   }
