@@ -124,6 +124,18 @@ If the repository is private, Pages availability depends on your GitHub plan.
   - Drag a waveform left or right. *Dragging moves* sets whether the whole file moves (the default) or only that waveform.
   - Or type a shift in the waveform's Δt box or the file's *Shift* box: `12.5n`, `-3 us`, `1e-9`, `40 samples`.
   - ←/→ nudges the selected waveform by 1 sample (Shift: 10 samples, Alt: 1 pixel).
+- **Overlay, level and scale** (display only: readouts, cursors, math, trends and double-pulse values use the real values):
+  - Select a waveform (click it or its row on the right). Its row shows the level controls.
+  - **Overlay on another channel's pane** (*Panes: One per channel*): pick *In Vd* (or another channel) to draw
+    it in that pane, scaled to fit. Example: make a math channel `diff(Is)` (or `smooth(diff(Is), 1n)`), select it
+    and pick *In Vd* to compare dI/dt with the Vd edge. The pane keeps Vd's axis and unit, and its title lists
+    the overlaid channels.
+  - **Move it vertically:** drag the waveform up or down (the first few pixels decide: sideways shifts time,
+    up/down moves the level), or use ↑/↓ (1 pixel, Shift: 10). The pane's axis then stays fixed (*Y locked*);
+    double-click to fit again.
+  - **Scale:** Alt+wheel over the plot scales the selected waveform about the mouse position, or type the scale
+    (`×`, e.g. `5e-9`, `10n`) and offset (`+`, in the pane's unit). *Fit* scales and moves it to fill the pane
+    over the shown time span. *0* returns it to its own pane with scale 1 and offset 0.
 - **Navigate:**
   - Wheel zooms time; Shift+wheel or wheel over the Y axis zooms Y.
   - Drag the background to pan; Shift+drag or *Box zoom* zooms to a box.
@@ -163,6 +175,10 @@ If the repository is private, Pages availability depends on your GitHub plan.
        switching times from 90 % to 85 %. Percentages are of each signal's 0–100 % swing at the switching event.
        The editable thresholds are:
        - Switching times: the Vg and Vd levels.
+       - Energy: **Is deskew** (default 0 ns), signed like the Δt boxes: a positive value moves Is later (to the
+         right), so a deskew of +1 ns gives the same values as a Δt of +1 ns on the Is waveform. It adds to that Δt.
+         It applies to every parameter that uses Is, the switching energy above all. Note: dpa's `deskew_ns` has the
+         opposite sign (dpa `deskew_ns = 1.3` is `-1.3` here). Marks found on Is are drawn on the Is waveform itself.
        - Energy: where Eon/Eoff start and end. Eoff ends on Is (0 %, the default) or on Vd (e.g. 99 %).
          Ending on Vd leaves out the current tail after Vd has risen, so Eoff is smaller.
        - Gate charge: where Qg starts and ends, and the Ig-settled band.

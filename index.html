@@ -118,7 +118,7 @@
           </div>
         </div>
       </section>
-      <div class="status" id="status">Drag a waveform to shift it in time · drag background to pan · wheel to zoom time · Shift+wheel to zoom Y · double-click to fit</div>
+      <div class="status" id="status">Drag a waveform sideways to shift it in time, up/down to move its level · drag background to pan · wheel to zoom time · Shift+wheel to zoom Y · double-click to fit</div>
     </section>
 
     <aside id="tracePanel">
@@ -133,9 +133,12 @@
   <dialog id="help">
     <h3>Using TSS Viewer</h3>
     <table>
-      <tr><th>Drag a waveform</th><td>Shift it along the time axis (or the whole file, see <i>Dragging moves</i>)</td></tr>
+      <tr><th>Drag a waveform</th><td>Sideways: shift it along the time axis (or the whole file, see <i>Dragging moves</i>). Up/down: move its level on the plot (display only)</td></tr>
+      <tr><th>Alt+wheel</th><td>Scale the selected waveform on the plot (display only)</td></tr>
       <tr><th>Type a shift</th><td>Use the Δt box of a waveform or the file shift box. Accepts <code>12.5n</code>, <code>-3 us</code>, <code>1e-9</code>, <code>40 samples</code></td></tr>
       <tr><th>← / →</th><td>Nudge the selected waveform by one sample (Shift: 10 samples, Alt: 1 pixel)</td></tr>
+      <tr><th>↑ / ↓</th><td>Move the selected waveform up/down by one pixel (Shift: 10)</td></tr>
+      <tr><th>Overlay</th><td>In the selected waveform's row (right), pick <i>In Vd</i> etc. to draw it in another channel's pane, scaled to fit (e.g. dIs/dt over Vd). × and + set its scale and offset; <i>0</i> puts it back</td></tr>
       <tr><th>Drag background</th><td>Pan time (also Y once the pane's Y range is locked)</td></tr>
       <tr><th>Wheel</th><td>Zoom time around the mouse</td></tr>
       <tr><th>Shift+wheel / wheel on Y axis</th><td>Zoom Y of that pane (locks its Y range)</td></tr>

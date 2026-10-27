@@ -14,6 +14,13 @@
   const stem = (name) => name.replace(/\.tss$/i, '');
   const dirOf = (path) => { const i = path.lastIndexOf('/'); return i < 0 ? '' : path.slice(0, i); };
 
+  /**
+   * Per-waveform state, kept across rebuilds (S.ts): time shift, visibility, colour and the display-only level:
+   * drawn at value * yGain + yOff, in the pane of channel `pane` (null: its own pane; 'One per channel' panes only).
+   */
+  const newTraceState = () => ({ offset: 0, visible: true, color: null, yGain: 1, yOff: 0, pane: null });
+  const levelChanged = (st) => st.yGain !== 1 || st.yOff !== 0 || !!st.pane;
+
   const S = {
     files: [],              // file records in the file list, see addEntries()
     pool: [],               // captures found by Open folder but not picked yet (see the file picker)
@@ -34,7 +41,7 @@
   };
 
   const plot = new Plot($('#plot'), {
-    onShiftDrag, onShiftEnd, onSelect,
+    onShiftDrag, onShiftEnd, onSelect, onLevelDrag, onLevelEnd, onLevelScale,
     onHover: (t) => { S.hoverT = t; scheduleReadouts(); },
     onCursors: () => { renderCursorBox(); scheduleReadouts(); },
   });
@@ -407,15 +414,19 @@
           if (f >= ch.wfm.frameCount) continue;
           const id = `${rec.id}|${ch.key}|${f}`;
           let st = S.ts.get(id);
-          if (!st) S.ts.set(id, (st = { offset: 0, visible: true, color: null }));
+          if (!st) S.ts.set(id, (st = newTraceState()));
           traces.push({
             id, rec, ch, frame: f, nFrames: nF, st, series: seriesFor(ch, f), unit: ch.wfm.units,
             visible: st.visible, shift: rec.offset + st.offset, selected: id === S.selected, color: '', name: '',
+            yGain: st.yGain, yOff: st.yOff, over: false,
           });
         }
       }
     }
 
+    // With one pane per channel a waveform can be overlaid on another channel's pane (e.g. dIs/dt over Vd);
+    // the pane's axis and unit are those of its own channel, the overlaid ones are named in its title.
+    const shown = new Set(traces.map((t) => t.ch.label.toLowerCase()));
     const panes = new Map();
     for (const t of traces) {
       let key, title;
@@ -423,12 +434,21 @@
         case 'file': key = `f${t.rec.id}`; title = t.rec.alias; break;
         case 'frame': key = `fr${t.frame}`; title = `Frame ${t.frame + 1}`; break;
         case 'single': key = 'all'; title = 'All waveforms'; break;
-        default: key = `l${t.ch.label.toLowerCase()}`; title = t.ch.label;
+        default: {
+          const host = t.st.pane && t.st.pane.toLowerCase() !== t.ch.label.toLowerCase() && shown.has(t.st.pane.toLowerCase()) ? t.st.pane : null;
+          t.over = !!host;
+          key = `l${(host || t.ch.label).toLowerCase()}`; title = host || t.ch.label;
+        }
       }
-      if (!panes.has(key)) panes.set(key, { key, title, unit: t.unit, traces: [] });
+      if (!panes.has(key)) panes.set(key, { key, title, unit: null, traces: [], over: [] });
       const p = panes.get(key);
-      if (p.unit !== t.unit) p.unit = '';
+      if (t.over) { if (!p.over.includes(t.ch.label)) p.over.push(t.ch.label); }
+      else p.unit = p.unit === null || p.unit === t.unit ? t.unit : '';
       p.traces.push(t);
+    }
+    for (const p of panes.values()) {
+      if (p.over.length) p.title += ` + ${p.over.join(' + ')}`;
+      if (p.unit === null) p.unit = '';
     }
 
     const pal = PALETTE[isDark() ? 'dark' : 'light'];
@@ -451,7 +471,7 @@
   function traceName(t) {
     const fr = t.nFrames > 1 ? `F${t.frame + 1}` : '';
     const parts = {
-      label: [t.rec.alias, fr],
+      label: [t.rec.alias, t.over ? t.ch.label : '', fr],
       file: [t.ch.label, fr],
       frame: [t.rec.alias, t.ch.label],
       single: [t.rec.alias, t.ch.label, fr],
@@ -717,7 +737,7 @@
     for (const p of plot.panes) {
       h += `<div class="pane-h">${esc(p.title)}${p.unit ? ` [${esc(p.unit)}]` : ''}</div>`;
       for (const t of p.traces) {
-        h += `<div class="trace${t.selected ? ' sel' : ''}${t.visible ? '' : ' hidden-tr'}" data-id="${esc(t.id)}" title="${esc(fullName(t))}">
+        h += `<div class="trace${t.selected ? ' sel' : ''}${t.visible ? '' : ' hidden-tr'}${levelChanged(t.st) ? ' lvl' : ''}" data-id="${esc(t.id)}" title="${esc(fullName(t))}">
           <div class="tline">
             <input type="checkbox" class="eye" ${t.visible ? 'checked' : ''} title="Show / hide">
             <input type="color" class="swatch" value="${t.color}" title="Colour">
@@ -727,6 +747,7 @@
           <div class="tshift">Δt <input type="text" class="shift" value="${esc(fmtShift(t.st.offset))}" spellcheck="false" title="Time shift of this waveform, e.g. 12.5n, -3us, 40 samples">
             <button class="btn small reset" title="Zero this shift">0</button>
             <span class="fnote">${t.rec.offset ? `+ file ${esc(Units.fmt(t.rec.offset, 's', 6))}` : ''}</span></div>
+          ${levelRow(t)}
           <div class="tcur"${plot.cursors ? '' : ' hidden'}></div>
         </div>`;
       }
@@ -734,6 +755,66 @@
     host.innerHTML = h;
     updateReadouts();
   }
+
+  const fmtLevel = (v) => String(+v.toPrecision(4));
+
+  /**
+   * Level controls of a waveform (shown for the selected one, or once changed): the pane it is drawn in,
+   * its scale and offset on that pane's axis, Fit to the pane, and back to normal.
+   */
+  function levelRow(t) {
+    let pane = '';
+    if (S.groupBy === 'label') {
+      const others = [...new Set(S.traces.map((x) => x.ch.label))].filter((l) => l.toLowerCase() !== t.ch.label.toLowerCase());
+      pane = `<select class="ypane" title="Show this waveform in another channel's pane, e.g. dIs/dt over Vd">
+        <option value="">Own pane</option>${others.map((l) => `<option value="${esc(l)}"${t.over && t.st.pane === l ? ' selected' : ''}>In ${esc(l)}</option>`).join('')}</select>`;
+    }
+    return `<div class="tlevel">${pane}
+      <span title="Scale on the plot (display only), e.g. 2, 0.5, 10n">×</span><input type="text" class="ygain" value="${esc(fmtLevel(t.st.yGain))}" spellcheck="false"
+        title="Scale on the plot (display only), e.g. 2, 0.5, 10n. Alt+wheel scales the selected waveform">
+      <span title="Offset on the pane's axis (display only)">+</span><input type="text" class="yoff" value="${esc(fmtLevel(t.st.yOff))}" spellcheck="false"
+        title="Offset on the pane's axis, in its unit (display only). Drag the waveform up or down, or use ↑/↓">
+      <button class="btn small yfit" title="Scale and move it to fill the pane over the shown time span">Fit</button>
+      <button class="btn small yreset" title="Own pane, scale 1, offset 0">0</button></div>`;
+  }
+
+  function updateLevelInputs() {
+    document.querySelectorAll('#traces .trace').forEach((el) => {
+      const t = S.byId.get(el.dataset.id);
+      if (!t) return;
+      el.classList.toggle('lvl', levelChanged(t.st));
+      const g = $('.ygain', el), o = $('.yoff', el);
+      if (g !== document.activeElement) g.value = fmtLevel(t.st.yGain);
+      if (o !== document.activeElement) o.value = fmtLevel(t.st.yOff);
+    });
+  }
+
+  function setLevel(t, gain, off) {
+    t.st.yGain = t.yGain = gain;
+    t.st.yOff = t.yOff = off;
+    plot.redraw();
+    updateLevelInputs();
+  }
+
+  /** Scale and move a waveform to fill its pane over the shown time span, with a round scale (1, 2 or 5 x 10^n). */
+  function fitLevel(t) {
+    const r = plot.levelRanges(t);
+    if (!r) { status('Nothing to fit: the waveform is flat or out of view'); return; }
+    const g0 = (0.8 * (r.hi - r.lo)) / (r.rawHi - r.rawLo);
+    const e = Math.pow(10, Math.floor(Math.log10(g0))), m = g0 / e;
+    const g = (m >= 5 ? 5 : m >= 2 ? 2 : 1) * e;
+    setLevel(t, g, (r.lo + r.hi) / 2 - (g * (r.rawLo + r.rawHi)) / 2);
+    status(`${t.rec.alias} · ${t.ch.label}: drawn × ${fmtLevel(g)} + ${fmtLevel(t.st.yOff)} ${r.pane.unit} (readouts keep its own values)`);
+  }
+
+  function onLevelDrag(t, dv) { setLevel(t, t.st.yGain, t.st.yOff + dv); }
+
+  function onLevelEnd(t, total) {
+    status(`${t.rec.alias} · ${t.ch.label} moved by ${Units.fmt(total, (plot.paneOf(t) || {}).unit || '', 4)} on the plot (display only)`);
+  }
+
+  /** Scale a waveform by k about the drawn level v, which stays where it is. */
+  function onLevelScale(t, k, v) { setLevel(t, t.st.yGain * k, v + (t.st.yOff - v) * k); }
 
   function updateShiftInputs() {
     document.querySelectorAll('#traces .trace').forEach((el) => {
@@ -811,7 +892,15 @@
     const t = S.byId.get(row.dataset.id);
     if (!t) return;
     if (e.target.classList.contains('reset')) { t.st.offset = 0; applyShifts(); return; }
-    if (e.target.matches('input')) return;
+    if (e.target.classList.contains('yfit')) { fitLevel(t); return; }
+    if (e.target.classList.contains('yreset')) {
+      const moved = !!t.st.pane;
+      t.st.pane = null;
+      setLevel(t, 1, 0);
+      if (moved) rebuild();
+      return;
+    }
+    if (e.target.matches('input, select')) return;
     onSelect(S.selected === t.id ? null : t);
   });
 
@@ -827,6 +916,19 @@
       const v = Units.parseTime(e.target.value, t.series.tstep);
       e.target.classList.toggle('bad', !isFinite(v));
       if (isFinite(v)) { t.st.offset = v; applyShifts(); }
+    } else if (e.target.classList.contains('ygain') || e.target.classList.contains('yoff')) {
+      const gain = e.target.classList.contains('ygain'), v = Units.parseNum(e.target.value);
+      const ok = isFinite(v) && (!gain || v !== 0);
+      e.target.classList.toggle('bad', !ok);
+      if (ok) setLevel(t, gain ? v : t.st.yGain, gain ? t.st.yOff : v);
+    } else if (e.target.classList.contains('ypane')) {
+      // Joining another pane fits the waveform to it; back in its own pane it is drawn as it is.
+      t.st.pane = e.target.value || null;
+      if (!t.st.pane) { t.st.yGain = 1; t.st.yOff = 0; }
+      S.selected = t.id;
+      rebuild();
+      const nt = S.byId.get(t.id);
+      if (nt && nt.over) fitLevel(nt);
     }
   });
 
@@ -1806,6 +1908,9 @@
     return ch ? `${r.rec.id}|${ch.key}|${r.frame}` : null;
   }
 
+  /** Where a mark found on the deskewed Is sits on the Is waveform itself: earlier by the deskew. */
+  const dpDeskew = (r, role) => (role === 'is' && r.isDeskew ? -r.isDeskew : 0);
+
   /** How far the waveform of `role` was moved (its own Δt) since the extraction. */
   function dpMoved(r, role) {
     const id = dpTraceId(r, role), st = id && S.ts.get(id);
@@ -1916,7 +2021,8 @@
             base[role] = st ? st.offset : 0;
           }
           const res = Dpa.analyze({ t0: info.tstart, tstep: info.tstep, n: info.samples, raw }, groups, opts);
-          DP.results.push(dpResult(rec, f, nF, info.frameTimes[f], roles, base, res));
+          // marks found on the deskewed Is are drawn on the Is waveform itself, i.e. earlier by the deskew
+          DP.results.push(Object.assign(dpResult(rec, f, nF, info.frameTimes[f], roles, base, res), { isDeskew: opts.isDeskew * 1e-9 }));
           renderDpResults();
           if (frames.length > 1) await tick();
         }
@@ -1979,7 +2085,7 @@
     }
     const multi = view.length > 1, prim = dpPrimary(), bands = [], lines = [];
     for (const r of view) {
-      const at = (t, role) => t + r.rec.offset + dpMoved(r, role);
+      const at = (t, role) => t + r.rec.offset + dpMoved(r, role) + dpDeskew(r, role);
       const labelled = r === prim;
       for (const w of r.windows) {
         if (!DP.show.has(w.group)) continue;
@@ -2010,7 +2116,7 @@
     if (ev !== 'all') {
       for (const r of DP.view) {
         if (!r.events) continue;
-        const ts = r.markers.filter((m) => m.ev === ev && m.group !== 'Qg').map((m) => m.t + dpMoved(r, m.role));
+        const ts = r.markers.filter((m) => m.ev === ev && m.group !== 'Qg').map((m) => m.t + dpMoved(r, m.role) + dpDeskew(r, m.role));
         for (const t of ts.concat(r.events[ev] + dpMoved(r, 'vd'))) { lo = Math.min(lo, t + r.rec.offset); hi = Math.max(hi, t + r.rec.offset); }
       }
     }
@@ -2223,7 +2329,15 @@
 
   document.addEventListener('keydown', (e) => {
     if (e.target.matches('input, select, textarea') || $('#help').open || mdlg.open || cdlg.open) return;
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && S.selected) {
+      // move the selected waveform up/down by one pixel (Shift: 10) on its pane's axis, which stays still
+      const t = S.byId.get(S.selected), p = t && plot.paneOf(t);
+      if (!p) return;
+      e.preventDefault();
+      p.yAuto = false;
+      const step = ((p.y1 - p.y0) / p.rect.h) * (e.shiftKey ? 10 : 1);
+      setLevel(t, t.st.yGain, t.st.yOff + (e.key === 'ArrowUp' ? step : -step));
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       const t = S.selected && S.byId.get(S.selected);
       if (!t) return;
       e.preventDefault();

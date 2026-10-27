@@ -68,6 +68,7 @@ const Dpa = (() => {
     { key: 'timeVgOff', group: 'time', label: 'Vg at turn-off (tdoff starts)', def: 90 },
     { key: 'timeVdHi', group: 'time', label: 'Vd upper level (tdon ends, tf starts; tr ends)', def: 90 },
     { key: 'timeVdLo', group: 'time', label: 'Vd lower level (tf ends; tdoff ends, tr starts)', def: 10 },
+    { key: 'isDeskew', group: 'energy', label: 'Is deskew (+ moves Is later, like Δt)', def: 0, unit: 'ns', min: -1000, max: 1000 },
     { key: 'eonVd', group: 'energy', label: 'Eon starts at Vd …', def: 99 },
     { key: 'eonIs', group: 'energy', label: '… or at Is, whichever is earlier', def: 10 },
     { key: 'eonEndVd', group: 'energy', label: 'Eon ends at Vd', def: 1 },
@@ -236,6 +237,10 @@ const Dpa = (() => {
       this.raw = {};
       for (const r of ['vd', 'vg', 'is', 'ig', 'vgi']) this.raw[r] = sig.raw[r] || null;
       if (!this.raw.vd) fail('No Vd channel assigned');
+      // Is deskew, signed like the viewer's Δt shifts: a positive value moves Is later (Is is taken at t - deskew).
+      // That is dpa's deskew_ns with the opposite sign.  It applies to every parameter that uses Is, the switching
+      // energy above all.
+      if (this.opt.isDeskew && this.raw.is) this.raw.is = this._advance(this.raw.is, -this.opt.isDeskew * NS);
       this._smoothed = new Map();
       this._levels = new Map();
       this._anchors = new Map();
@@ -247,6 +252,21 @@ const Dpa = (() => {
 
     // ---------------------------------------------------------------- helpers
     t(i) { return this.t0 + this.step * i; }
+
+    /** numpy.interp(t + d, t, y): y taken d seconds later, held at its first / last value beyond the record. */
+    _advance(y, d) {
+      const n = this.n, out = new Float64Array(n), tN = this.t(n - 1);
+      for (let i = 0; i < n; i++) {
+        const x = this.t(i) + d;
+        if (x < this.t0) { out[i] = y[0]; continue; }
+        if (x >= tN) { out[i] = y[n - 1]; continue; }
+        let j = Math.min(n - 2, Math.max(0, Math.floor((x - this.t0) / this.step)));
+        while (j > 0 && this.t(j) > x) j--;
+        while (j < n - 2 && this.t(j + 1) <= x) j++;
+        out[i] = ((y[j + 1] - y[j]) / (this.t(j + 1) - this.t(j))) * (x - this.t(j)) + y[j];
+      }
+      return out;
+    }
 
     need(...roles) {
       const missing = roles.filter((r) => !this.raw[r]);

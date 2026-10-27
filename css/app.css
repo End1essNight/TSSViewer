@@ -172,6 +172,12 @@ main { flex: 1; display: grid; grid-template-columns: var(--side-w, 300px) 1fr v
 .tval { font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; }
 .tshift { display: flex; align-items: center; gap: 6px; margin: 4px 0 0 24px; font-size: 12px; color: var(--muted); }
 .tshift input { width: 104px; font-family: var(--mono); font-size: 12px; }
+.tlevel { display: none; align-items: center; flex-wrap: wrap; gap: 4px; margin: 4px 0 0 24px; font-size: 12px; color: var(--muted); }
+.trace.sel .tlevel, .trace.lvl .tlevel { display: flex; }
+.tlevel input { width: 62px; font-family: var(--mono); font-size: 12px; }
+.tlevel input.bad { outline: 2px solid var(--danger); }
+.tlevel select { max-width: 96px; font-size: 12px; padding: 1px 4px; }
+.trace.lvl .tlevel input { border-color: var(--accent); }
 .tcur { margin: 3px 0 0 24px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
 .eye { margin: 0; flex: none; }
 

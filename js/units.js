@@ -40,6 +40,12 @@ const Units = (() => {
     return num * FACTOR[suf];
   }
 
+  /** Parse a plain number with an optional SI prefix: "2", "-0.5", "1e-9", "10n", "2k". NaN if it is not one. */
+  function parseNum(str) {
+    const m = String(str).trim().replace(/,/g, '.').match(/^([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)\s*([a-zµμ]?)$/i);
+    return m && m[2] in FACTOR ? parseFloat(m[1]) * FACTOR[m[2]] : NaN;
+  }
+
   /** Round step for roughly `count` ticks across `range`. */
   function niceStep(range, count) {
     const raw = range / Math.max(1, count);
@@ -65,5 +71,5 @@ const Units = (() => {
     return fmt(v, unit, digits);
   }
 
-  return { fmt, parseTime, ticks, tickLabel };
+  return { fmt, parseTime, parseNum, ticks, tickLabel };
 })();
