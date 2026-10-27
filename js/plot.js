@@ -20,6 +20,10 @@ class Plot {
     this.mode = 'pan';        // 'pan' | 'zoom'
     this.cursors = null;      // {a, b} in seconds
     this.band = null;         // {a, b} highlighted time window (frame-trend measurement)
+    // Double-pulse extraction overlay: {bands: [{a, b, label, color, traceId}], lines: [{t, label, color, dash, traceId}]}.
+    // A line gets a dot on its trace and its label in the pane that holds trace `traceId` (else the top pane).
+    // Marks without a colour take their trace's colour; marks of a hidden trace are not drawn.
+    this.marks = null;
     this.hover = null;        // {x, y, t}
     this.drag = null;
     this.minPaneH = 110;
@@ -201,6 +205,8 @@ class Plot {
       ctx.fillStyle = T.pane;
       ctx.fillRect(r.x, r.y, r.w, r.h);
       if (this.band) this._drawBand(r);
+      if (this.marks && p === this.panes[0]) this._markTraces = new Map(this.traces.map((t) => [t.id, t]));
+      if (this.marks) this._drawMarkBands(p, p === this.panes[0]);
 
       // grid
       ctx.strokeStyle = T.grid; ctx.lineWidth = 1;
@@ -222,6 +228,7 @@ class Plot {
       ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); ctx.clip();
       const order = p.traces.filter((t) => t.visible).sort((a, b) => (a.selected ? 1 : 0) - (b.selected ? 1 : 0));
       for (const tr of order) this._drawTrace(p, tr);
+      if (this.marks) this._drawMarkLines(p);
       ctx.restore();
 
       // frame + title
@@ -303,6 +310,71 @@ class Plot {
     ctx.globalAlpha = 0.1; ctx.fillRect(xa, r.y, xb - xa, r.h);
     ctx.globalAlpha = 0.6; ctx.fillRect(xa, r.y, 1, r.h); ctx.fillRect(xb - 1, r.y, 1, r.h);
     ctx.globalAlpha = 1;
+  }
+
+  /** Shaded integration windows; their labels stack up from the bottom of the top pane. */
+  _drawMarkBands(p, labels) {
+    const ctx = this.ctx, r = p.rect;
+    const rows = [];
+    ctx.font = this.theme.font; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+    for (const b of this.marks.bands) {
+      const tr = this._markTraces.get(b.traceId);
+      if (tr && !tr.visible) continue;
+      const xa = Math.max(r.x, Math.min(r.x + r.w, this.t2x(b.a)));
+      const xb = Math.max(r.x, Math.min(r.x + r.w, this.t2x(b.b)));
+      if (xb <= xa) continue;
+      ctx.fillStyle = b.color || (tr ? tr.color : this.theme.muted);
+      ctx.globalAlpha = 0.13; ctx.fillRect(xa, r.y, xb - xa, r.h);
+      ctx.globalAlpha = 1;
+      if (!labels || !b.label) continue;
+      const w = ctx.measureText(b.label).width + 6, x = Math.min(xa + 3, r.x + r.w - w);
+      let k = rows.findIndex((right) => x > right);
+      if (k < 0) { k = rows.length; rows.push(0); }
+      rows[k] = x + w;
+      ctx.fillText(b.label, x, r.y + r.h - 3 - k * 14);
+    }
+  }
+
+  /** Dashed marker lines; in the pane of each line's trace also a dot on the trace and a label. */
+  _drawMarkLines(p) {
+    const ctx = this.ctx, r = p.rect, T = this.theme;
+    const labels = [];
+    ctx.lineWidth = 1;
+    for (const ln of this.marks.lines) {
+      const tr = this._markTraces.get(ln.traceId);
+      if (tr && !tr.visible) continue;
+      const x = Math.round(this.t2x(ln.t)) + 0.5;
+      if (x < r.x || x > r.x + r.w) continue;
+      const color = ln.color || (tr ? tr.color : T.muted);
+      ctx.strokeStyle = color; ctx.globalAlpha = 0.75; ctx.setLineDash(ln.dash || [4, 3]);
+      ctx.beginPath(); ctx.moveTo(x, r.y); ctx.lineTo(x, r.y + r.h); ctx.stroke();
+      ctx.globalAlpha = 1;
+      if (tr ? !p.traces.includes(tr) : p !== this.panes[0]) continue;   // dot and label in the trace's own pane
+      if (tr) {
+        const v = tr.series.valueAt(ln.t - tr.shift);
+        if (isFinite(v)) {
+          ctx.fillStyle = color;
+          ctx.beginPath(); ctx.arc(x, this.v2y(p, v), 3.5, 0, 2 * Math.PI); ctx.fill();
+        }
+      }
+      if (ln.label) labels.push({ x, text: ln.label, color });
+    }
+    ctx.setLineDash([]);
+    // Stack labels in rows under the pane title so that neighbours do not overlap; when the pane has no row
+    // left a label is dropped (its line and dot stay; zoom in to separate them).
+    ctx.font = T.font; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    labels.sort((a, b) => a.x - b.x);
+    const rows = [], maxRows = Math.max(1, Math.floor((r.h - 40) / 14));
+    for (const lb of labels) {
+      const w = ctx.measureText(lb.text).width + 6;
+      const x = Math.min(lb.x + 3, r.x + r.w - w);
+      let k = rows.findIndex((right) => x > right);
+      if (k < 0) { if (rows.length >= maxRows) continue; k = rows.length; rows.push(0); }
+      rows[k] = x + w + 4;
+      const y = r.y + 22 + k * 14;
+      ctx.fillStyle = T.pane; ctx.globalAlpha = 0.8; ctx.fillRect(x, y - 1, w, 14); ctx.globalAlpha = 1;
+      ctx.fillStyle = lb.color; ctx.fillText(lb.text, x + 3, y);
+    }
   }
 
   _drawCursors(top, bottom) {

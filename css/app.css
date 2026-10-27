@@ -278,6 +278,76 @@ dialog td { padding: 4px 0; color: var(--muted); }
 #trendTable .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
 #trendTable .hint { padding: 8px 10px; }
 
+/* ------------------------------------------------------------- double pulse */
+#dpPanel { flex: none; height: 46%; min-height: 200px; display: flex; flex-direction: column; background: var(--panel); border-top: 1px solid var(--border); position: relative; }
+#dpPanel[hidden] { display: none; }
+#dpPanel .psplit { position: absolute; top: -4px; left: 0; right: 0; height: 8px; cursor: ns-resize; z-index: 1; }
+#dpRun { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.dp-body { flex: 1; display: flex; min-height: 0; border-top: 1px solid var(--border); }
+#dpSetup { width: 330px; flex: none; overflow-y: auto; border-right: 1px solid var(--border); padding: 0 0 10px; font-size: 12px; }
+.dp-step { padding: 8px 10px 0; }
+.dp-step h4 { margin: 0 0 5px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.dp-step h4 .n { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; background: var(--accent); color: var(--accent-text); font-size: 10px; letter-spacing: 0; }
+.dp-step h4 .btn { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 400; }
+.dp-step h4 .btn + .btn { margin-left: 0; }
+.dp-files { max-height: 132px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
+.dp-files label { display: flex; align-items: center; gap: 6px; padding: 2px 6px; cursor: pointer; white-space: nowrap; }
+.dp-files label:hover { background: var(--panel-2); }
+.dp-files .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dp-files input, .dp-params input { margin: 0; }
+.dp-roles { display: grid; grid-template-columns: 34px 120px 1fr; gap: 4px 6px; align-items: center; }
+.dp-roles b { font-weight: 600; }
+.dp-roles select { font-size: 12px; padding: 1px 4px; width: 100%; }
+.dp-roles .res { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dp-roles .res.warn { color: #c48a00; }
+.dp-params label { display: flex; align-items: baseline; gap: 6px; padding: 1px 0; cursor: pointer; }
+.dp-params .warn { color: #c48a00; }
+.dp-param { display: flex; align-items: center; gap: 6px; }
+.dp-param label { flex: 1; min-width: 0; }
+.dp-param .cfg { padding: 0 6px; font-size: 11px; }
+.dp-param .cfg.open { border-color: var(--accent); }
+.dp-cfg { display: grid; grid-template-columns: 1fr 52px 18px; gap: 3px 6px; align-items: center; margin: 2px 0 2px 20px; padding: 6px 8px; border: 1px solid var(--border); border-bottom: 0; border-radius: 6px 6px 0 0; background: var(--panel-2); }
+.dp-cfg .cl { color: var(--muted); }
+.dp-cfg input { width: 52px; padding: 1px 4px; font-family: var(--mono); font-size: 12px; text-align: right; }
+.dp-cfg select { grid-column: span 2; font-size: 12px; padding: 1px 4px; }
+.dp-cfg input.chg, .dp-cfg select.chg { border-color: var(--accent); background: var(--sel); font-weight: 600; }
+.dp-cfg input.bad { outline: 2px solid var(--danger); }
+.dp-cfgbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 6px 20px; padding: 0 8px 6px; border: 1px solid var(--border); border-top: 0; border-radius: 0 0 6px 6px; background: var(--panel-2); font-size: 11px; }
+#dpRun .warn { color: #c48a00; }
+.dp-go { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dp-go select { font-size: 12px; padding: 1px 4px; }
+.dp-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+#dpView { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 12px; }
+#dpView:empty { display: none; }
+#dpView .who { font-weight: 600; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#dpView .chip { display: inline-flex; align-items: center; gap: 5px; }
+#dpView .chip i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+#dpView .chip svg { flex: none; }
+#dpView .vfile { max-width: 260px; font-weight: 600; }
+#dpView .vfile .xbtn { font-size: 13px; padding: 0; }
+#dpView .chip.on .xbtn { color: var(--accent-text); }
+#dpView .warn { color: #c48a00; }
+#dpResults { flex: 1; overflow: auto; font-size: 12px; }
+#dpResults .hint { padding: 10px 12px; }
+#dpResults table { border-collapse: collapse; }
+#dpResults th, #dpResults td { padding: 3px 8px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--border); }
+#dpResults th { position: sticky; top: 0; background: var(--panel-2); color: var(--muted); font-weight: 600; z-index: 1; }
+#dpResults th.g { text-align: center; color: var(--text); border-left: 1px solid var(--border); }
+#dpResults th.c0, #dpResults td.c0 { text-align: left; position: sticky; left: 0; background: var(--panel); max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+#dpResults th.c0 { background: var(--panel-2); z-index: 2; }
+#dpResults td { font-family: var(--mono); }
+#dpResults td.c0 { font-family: var(--sans); }
+#dpResults td.gs { border-left: 1px solid var(--border); }
+#dpResults td.nan { color: var(--muted); }
+#dpResults td.iss { text-align: left; color: #c48a00; font-family: var(--sans); max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
+#dpResults tbody tr { cursor: pointer; }
+#dpResults tfoot td { position: sticky; bottom: 0; background: var(--panel-2); font-weight: 700; border-top: 2px solid var(--border); }
+#dpResults tfoot td.c0 { background: var(--panel-2); z-index: 1; }
+#dpResults tfoot td.iss { font-weight: 400; color: var(--muted); }
+#dpResults tbody tr:hover td { background: var(--sel); }
+#dpResults tbody tr.on td { background: var(--sel); }
+#dpResults tbody tr.prim td.c0 { box-shadow: inset 3px 0 var(--accent); }
+
 @media (max-width: 1100px) {
   main { grid-template-columns: var(--side-w, 260px) 1fr; grid-template-rows: 1fr 220px; }
   #sideSplit { left: calc(var(--side-w, 260px) - 4px); bottom: 220px; }
@@ -292,4 +362,6 @@ dialog td { padding: 4px 0; color: var(--muted); }
   #plotWrap { height: 70vh; flex: none; }
   .group.end { margin-left: 0; }
   #trendTable { display: none; }
+  .dp-body { flex-direction: column; }
+  #dpSetup { width: auto; max-height: 45%; border-right: 0; border-bottom: 1px solid var(--border); }
 }

@@ -31,8 +31,8 @@
     <div class="group">
       <span class="lbl">Dragging moves</span>
       <div class="seg" id="moveSeg">
-        <button data-v="trace" class="on" title="Only the waveform you grab moves">Waveform</button>
-        <button data-v="file" title="Every waveform from the same file moves together">Whole file</button>
+        <button data-v="trace" title="Only the waveform you grab moves">Waveform</button>
+        <button data-v="file" class="on" title="Every waveform from the same file moves together">Whole file</button>
       </div>
     </div>
 
@@ -49,6 +49,7 @@
     <div class="group">
       <button class="btn" id="btnMath" title="Add math channels: A/B, A×B, integral, derivative, any formula">ƒ Math</button>
       <button class="btn" id="btnTrend" title="Frame trends: measure a channel in a time window on every frame and plot it against the frame (T)">Trends</button>
+      <button class="btn" id="btnDp" title="Double pulse: extract switching times, energies, gate charge, dV/dt, dI/dt and Vd overshoot (D)">Double pulse</button>
       <button class="btn" id="btnCursors" title="Toggle time cursors A/B (C)">Cursors</button>
       <button class="btn" id="btnFit" title="Fit all waveforms (F, or double-click the plot)">Fit</button>
       <button class="btn" id="btnResetShifts" title="Set every time shift back to zero">Reset shifts</button>
@@ -99,6 +100,24 @@
           <div id="trendTable"></div>
         </div>
       </section>
+      <section id="dpPanel" hidden>
+        <div class="psplit" title="Drag to resize"></div>
+        <div class="trend-bar">
+          <b>Double pulse</b>
+          <span class="lbl" id="dpVer"></span>
+          <span id="dpRun"></span>
+          <span class="spacer"></span>
+          <button type="button" class="btn small" id="dpCsv" title="Save every extracted value in one CSV file: one row per file and frame, with the file's test conditions">Download CSV</button>
+          <button type="button" class="xbtn" id="dpClose" title="Close double pulse">×</button>
+        </div>
+        <div class="dp-body">
+          <div id="dpSetup"></div>
+          <div class="dp-main">
+            <div id="dpView"></div>
+            <div id="dpResults"></div>
+          </div>
+        </div>
+      </section>
       <div class="status" id="status">Drag a waveform to shift it in time · drag background to pan · wheel to zoom time · Shift+wheel to zoom Y · double-click to fit</div>
     </section>
 
@@ -125,6 +144,7 @@
       <tr><th>Double-click / F</th><td>Fit all waveforms and unlock Y ranges</td></tr>
       <tr><th>C</th><td>Toggle cursors A/B; drag them to measure Δt and Δvalue</td></tr>
       <tr><th>T</th><td>Toggle frame trends: mean, integral, min/max… of a channel in a time window, on every frame. Click a point to show that frame (Shift+click adds it)</td></tr>
+      <tr><th>D</th><td>Toggle double pulse: tick the captures, assign the channels, pick the parameters and Extract. Click a result to see its extraction points and windows; Ctrl+click more results to overlay them. Dragging a waveform moves its marks with it</td></tr>
       <tr><th>Z</th><td>Toggle box-zoom mode</td></tr>
       <tr><th>Frames</th><td>For FastFrame captures type frames like <code>1-5, 8</code> or click the frame buttons</td></tr>
     </table>
@@ -210,6 +230,7 @@
   <script src="js/plot.js"></script>
   <script src="js/math.js"></script>
   <script src="js/trend.js"></script>
+  <script src="js/dpa.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
