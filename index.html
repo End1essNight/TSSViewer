@@ -37,22 +37,9 @@
     </div>
 
     <div class="group">
-      <span class="lbl">Panes</span>
-      <select id="groupBy" title="How waveforms are split into stacked panes">
-        <option value="label">One per channel</option>
-        <option value="file">One per file</option>
-        <option value="frame">One per frame</option>
-        <option value="single">Single pane</option>
-      </select>
-    </div>
-
-    <div class="group">
       <button class="btn" id="btnMath" title="Add math channels: A/B, A×B, integral, derivative, any formula">ƒ Math</button>
-      <button class="btn" id="btnTrend" title="Frame trends: measure a channel in a time window on every frame and plot it against the frame (T)">Trends</button>
-      <button class="btn" id="btnDp" title="Double pulse: extract switching times, energies, gate charge, dV/dt, dI/dt and Vd overshoot (D)">Double pulse</button>
       <button class="btn" id="btnCursors" title="Toggle time cursors A/B (C)">Cursors</button>
-      <button class="btn" id="btnFit" title="Fit all waveforms (F, or double-click the plot)">Fit</button>
-      <button class="btn" id="btnResetShifts" title="Set every time shift back to zero">Reset shifts</button>
+      <button class="btn" id="btnReset" title="Undo every time shift, level move, scale and overlay, and fit all waveforms">Reset</button>
       <button class="btn" id="btnPng" title="Save the plot as a PNG image">PNG</button>
     </div>
 
@@ -68,56 +55,66 @@
     </aside>
 
     <section id="plotWrap">
-      <div id="plotHost"><canvas id="plot"></canvas></div>
-      <div id="empty" class="empty">
-        <div class="empty-box">
-          <h2>No files open</h2>
-          <p>Use <b>Open files</b> or <b>Open folder</b> to load .tss captures. Files are read locally in your browser and never uploaded.</p>
-        </div>
-      </div>
-      <section id="trendPanel" hidden>
-        <div id="trendSplit" title="Drag to resize"></div>
-        <form id="trendForm" class="trend-bar" autocomplete="off">
-          <b>Frame trends</b>
-          <select id="tStat" title="What to measure in the window, on every frame"></select>
-          <span class="lbl">of</span><select id="tCh" title="Channel (math channels too)"></select>
-          <span class="lbl" id="tALbl">from</span><input id="tA" type="text" spellcheck="false" title="Window start, in displayed time, e.g. 120n, 1.5us">
-          <span class="lbl tB">to</span><input id="tB" class="tB" type="text" spellcheck="false" title="Window end, in displayed time">
-          <button type="button" class="btn small" id="tCur" title="Use the times of cursors A and B as the window">From cursors</button>
-          <button type="submit" class="btn small primary" id="tAdd">Add</button>
-          <button type="button" class="btn small" id="tUpd" hidden title="Apply the form to the selected measurement">Update</button>
-          <span class="spacer"></span>
-          <span class="lbl">X axis</span>
-          <select id="tX"><option value="frame">Frame number</option><option value="time">Trigger time</option></select>
-          <button type="button" class="btn small" id="tMeasure" title="Apply these measurements to more files from the opened folder, without loading them">Measure files…</button>
-          <button type="button" class="btn small" id="tCsv" title="Save every measured value in one CSV file: one row per file and frame, with the file's test conditions">CSV</button>
-          <button type="button" class="xbtn" id="tClose" title="Close frame trends">×</button>
-        </form>
-        <div id="trendList"></div>
-        <div id="trendBatch"></div>
-        <div class="trend-body">
-          <div id="trendHost"><canvas id="trendPlot"></canvas></div>
-          <div id="trendTable"></div>
-        </div>
-      </section>
-      <section id="dpPanel" hidden>
-        <div class="psplit" title="Drag to resize"></div>
-        <div class="trend-bar">
-          <b>Double pulse</b>
-          <span class="lbl" id="dpVer"></span>
-          <span id="dpRun"></span>
-          <span class="spacer"></span>
-          <button type="button" class="btn small" id="dpCsv" title="Save every extracted value in one CSV file: one row per file and frame, with the file's test conditions">Download CSV</button>
-          <button type="button" class="xbtn" id="dpClose" title="Close double pulse">×</button>
-        </div>
-        <div class="dp-body">
-          <div id="dpSetup"></div>
-          <div class="dp-main">
-            <div id="dpView"></div>
-            <div id="dpResults"></div>
+      <nav id="tabs" role="tablist">
+        <button type="button" class="tab on" data-tab="wave" role="tab" title="Waveforms (W)">Waveforms</button>
+        <button type="button" class="tab" data-tab="trend" role="tab" title="Frame trends: measure a channel in a time window on every frame and plot it against the frame (T)">Trends</button>
+        <button type="button" class="tab" data-tab="dp" role="tab" title="Double pulse: extract switching times, energies, gate charge, dV/dt, dI/dt and Vd overshoot (D)">Double pulse</button>
+      </nav>
+      <div id="tabBody">
+        <div id="plotHost"><canvas id="plot"></canvas></div>
+        <div id="empty" class="empty">
+          <div class="empty-box">
+            <h2>No files open</h2>
+            <p>Use <b>Open files</b> or <b>Open folder</b> to load .tss captures. Files are read locally in your browser and never uploaded.</p>
           </div>
         </div>
-      </section>
+        <section id="trendPanel" class="bg" data-tab="trend">
+          <form id="trendForm" class="trend-bar" autocomplete="off">
+            <b>Frame trends</b>
+            <select id="tStat" title="What to measure in the window, on every frame"></select>
+            <span class="lbl">of</span><select id="tCh" title="Channel (math channels too)"></select>
+            <span class="lbl" id="tALbl">from</span><input id="tA" type="text" spellcheck="false" title="Window start, in displayed time, e.g. 120n, 1.5us">
+            <span class="lbl tB">to</span><input id="tB" class="tB" type="text" spellcheck="false" title="Window end, in displayed time">
+            <button type="button" class="btn small" id="tCur" title="Use the times of cursors A and B as the window">From cursors</button>
+            <button type="submit" class="btn small primary" id="tAdd">Add</button>
+            <button type="button" class="btn small" id="tUpd" hidden title="Apply the form to the selected measurement">Update</button>
+            <span class="spacer"></span>
+            <span class="lbl">X axis</span>
+            <select id="tX"><option value="frame">Frame number</option><option value="time">Trigger time</option></select>
+            <button type="button" class="btn small" id="tMeasure" title="Apply these measurements to more files from the opened folder, without loading them">Measure files…</button>
+            <button type="button" class="btn small" id="tCsv" title="Save every measured value in one CSV file: one row per file and frame, with the file's test conditions">CSV</button>
+          </form>
+          <div id="trendList"></div>
+          <div id="trendBatch"></div>
+          <div id="trendPlotSlot"></div>
+          <div id="trendSplit" class="hsplit" title="Drag to resize"></div>
+          <div class="trend-body">
+            <div id="trendHost"><canvas id="trendPlot"></canvas></div>
+            <div class="isplit" data-panel="trendTable" title="Drag to resize · double-click to reset"><button type="button" class="collapse"></button></div>
+            <div id="trendTable"></div>
+          </div>
+        </section>
+        <section id="dpPanel" class="bg" data-tab="dp">
+          <div class="trend-bar">
+            <b>Double pulse</b>
+            <span class="lbl" id="dpVer"></span>
+            <span id="dpRun"></span>
+            <span class="spacer"></span>
+            <label class="lbl" id="dpAvgWrap" hidden title="Add an Average row to the table and the CSV: the mean of each column over the results that have a value in it"><input type="checkbox" id="dpAvg"> Average</label>
+            <button type="button" class="btn small" id="dpCsv" title="Save every extracted value in one CSV file: one row per file and frame, with the file's test conditions">Download CSV</button>
+          </div>
+          <div class="dp-body">
+            <div id="dpSetup"></div>
+            <div class="isplit" data-panel="dpSetup" title="Drag to resize · double-click to reset"><button type="button" class="collapse"></button></div>
+            <div class="dp-main">
+              <div id="dpView"></div>
+              <div id="dpPlotSlot" hidden></div>
+              <div id="dpSplit" class="hsplit" hidden title="Drag to resize"></div>
+              <div id="dpResults"></div>
+            </div>
+          </div>
+        </section>
+      </div>
       <div class="status" id="status">Drag a waveform sideways to shift it in time, up/down to move its level · drag background to pan · wheel to zoom time · Shift+wheel to zoom Y · double-click to fit</div>
     </section>
 
@@ -125,8 +122,8 @@
       <div id="cursorBox" hidden></div>
       <div id="traces"></div>
     </aside>
-    <div class="vsplit" id="sideSplit" data-side="side" title="Drag to resize · double-click to reset"></div>
-    <div class="vsplit" id="traceSplit" data-side="trace" title="Drag to resize · double-click to reset"></div>
+    <div class="vsplit" id="sideSplit" data-side="side" title="Drag to resize · double-click to reset"><button type="button" class="collapse"></button></div>
+    <div class="vsplit" id="traceSplit" data-side="trace" title="Drag to resize · double-click to reset"><button type="button" class="collapse"></button></div>
   </main>
 
 
@@ -135,7 +132,7 @@
     <table>
       <tr><th>Drag a waveform</th><td>Sideways: shift it along the time axis (or the whole file, see <i>Dragging moves</i>). Up/down: move its level on the plot (display only)</td></tr>
       <tr><th>Alt+wheel</th><td>Scale the selected waveform on the plot (display only)</td></tr>
-      <tr><th>Type a shift</th><td>Use the Δt box of a waveform or the file shift box. Accepts <code>12.5n</code>, <code>-3 us</code>, <code>1e-9</code>, <code>40 samples</code></td></tr>
+      <tr><th>Type a shift</th><td>Use the Δt box of a waveform (shown when it is selected or shifted). Accepts <code>12.5n</code>, <code>-3 us</code>, <code>1e-9</code>, <code>40 samples</code></td></tr>
       <tr><th>← / →</th><td>Nudge the selected waveform by one sample (Shift: 10 samples, Alt: 1 pixel)</td></tr>
       <tr><th>↑ / ↓</th><td>Move the selected waveform up/down by one pixel (Shift: 10)</td></tr>
       <tr><th>Overlay</th><td>In the selected waveform's row (right), pick <i>In Vd</i> etc. to draw it in another channel's pane, scaled to fit (e.g. dIs/dt over Vd). × and + set its scale and offset; <i>0</i> puts it back</td></tr>
@@ -145,9 +142,10 @@
       <tr><th>Drag Y axis</th><td>Pan Y of that pane</td></tr>
       <tr><th>Shift+drag, or Box zoom mode</th><td>Zoom to a box (a flat box zooms time only)</td></tr>
       <tr><th>Double-click / F</th><td>Fit all waveforms and unlock Y ranges</td></tr>
-      <tr><th>C</th><td>Toggle cursors A/B; drag them to measure Δt and Δvalue</td></tr>
-      <tr><th>T</th><td>Toggle frame trends: mean, integral, min/max… of a channel in a time window, on every frame. Click a point to show that frame (Shift+click adds it)</td></tr>
-      <tr><th>D</th><td>Toggle double pulse: tick the captures, assign the channels, pick the parameters and Extract. Click a result to see its extraction points and windows; Ctrl+click more results to overlay them. Dragging a waveform moves its marks with it</td></tr>
+      <tr><th>C</th><td>Toggle cursors A/B; drag them to measure. The box at the top right lists every waveform at A and B, with Δ and Δ/Δt</td></tr>
+      <tr><th>W / T / D</th><td>Show the Waveforms, Trends or Double pulse tab</td></tr>
+      <tr><th>Trends tab</th><td>Frame trends: mean, integral, min/max… of a channel in a time window, on every frame. Click a point to show that frame in the Waveforms tab (Shift+click adds it). Click a measurement to show its window there</td></tr>
+      <tr><th>Double pulse tab</th><td> tick the captures, assign the channels, pick the parameters and Extract. Tick a result (the box in front of its row) to see its waveforms with the extraction points and windows above the table; tick more to overlay them. Dragging a waveform moves its marks with it</td></tr>
       <tr><th>Z</th><td>Toggle box-zoom mode</td></tr>
       <tr><th>Frames</th><td>For FastFrame captures type frames like <code>1-5, 8</code> or click the frame buttons</td></tr>
     </table>
@@ -165,13 +163,13 @@
     </div>
     <div id="cdTable"></div>
     <p class="mnote">1. Narrow the list with the value boxes under each condition. 2. Tick the files to load (click a row, or the box in the header for every file shown). 3. Click <b>Load</b>.
-      Click a condition's name to sort by it. Mark <b>name</b> under conditions to build file names from them.</p>
+      Click a condition's name to sort by it. Mark <b>name</b> under conditions and click <b>Display names from conditions</b> to label the files with them.</p>
     <div class="mbtns">
-      <button type="button" class="btn" id="cdName" title="Name every file from the conditions marked 'name', e.g. high_voltage=600">Name files from marked</button>
+      <button type="button" class="btn" id="cdName" title="Set each file's display name from the conditions marked 'name', e.g. high_voltage=600 · period_ms=100. Files without those conditions keep their .tss name; the files themselves are not renamed">Display names from conditions</button>
       <button type="button" class="btn" id="cdReset" title="Name every file after its .tss file again">Reset names</button>
       <span style="flex:1"></span>
       <button type="button" class="btn" id="cdClose">Close</button>
-      <button type="button" class="btn" id="cdMeasure" title="Apply the Frame trends measurements to the ticked files without loading them: plot the trends and export CSVs">Measure ticked</button>
+      <button type="button" class="btn" id="cdMeasure" title="Apply the Frame trends measurements to the ticked files without loading them: plot the trends and export CSVs">Measure ticked (Trends)</button>
       <button type="button" class="btn primary" id="cdLoad">Load ticked files</button>
     </div>
   </dialog>

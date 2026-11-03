@@ -86,14 +86,38 @@ input[type="text"]:focus, select:focus { outline: 2px solid var(--accent); outli
 
 /* ------------------------------------------------------------- layout */
 main { flex: 1; display: grid; grid-template-columns: var(--side-w, 300px) 1fr var(--trace-w, 320px); min-height: 0; position: relative; }
-.vsplit { position: absolute; top: 0; bottom: 0; width: 8px; cursor: ew-resize; z-index: 2; }
+.vsplit { position: absolute; top: 0; bottom: 0; width: 8px; cursor: ew-resize; z-index: 5; }   /* above the Trends and Double pulse panels (z-index 3) */
 .vsplit:hover, .vsplit.drag { background: linear-gradient(to right, transparent 3px, var(--accent) 3px, var(--accent) 5px, transparent 5px); }
+/* Collapse buttons on the side splitters: hide a panel completely (class off on the splitter). */
+.collapse { position: absolute; top: 50%; left: 50%; width: 14px; height: 40px; margin: -20px 0 0 -7px; padding: 0; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--panel-2); color: var(--muted); font-size: 12px; line-height: 1; cursor: pointer; z-index: 3; }
+.collapse:hover { color: var(--accent-text); background: var(--accent); border-color: var(--accent); }
+.vsplit.off, .isplit.off { cursor: default; }
+.vsplit.off:hover, .isplit.off:hover { background: none; }
+main.side-off { --side-w: 0px !important; }
+main.trace-off { --trace-w: 0px !important; }
+main.side-off #sidebar, main.trace-off #tracePanel { visibility: hidden; overflow: hidden; border: 0; }
+main.side-off #sideSplit { left: 0; }
+main.trace-off #traceSplit { right: 0; }
+main.side-off #sideSplit .collapse { left: 7px; }
+main.trace-off #traceSplit .collapse { left: 1px; }
+.collapsed { display: none !important; }
+.isplit.off { margin: 0; width: 14px; }
 #sideSplit { left: calc(var(--side-w, 300px) - 4px); }
 #traceSplit { right: calc(var(--trace-w, 320px) - 4px); }
 #sidebar, #tracePanel { background: var(--panel); overflow-y: auto; min-height: 0; }
 #sidebar { border-right: 1px solid var(--border); }
 #tracePanel { border-left: 1px solid var(--border); }
 #plotWrap { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+#tabs { display: flex; align-items: flex-end; gap: 2px; padding: 4px 8px 0; background: var(--panel); border-bottom: 1px solid var(--border); flex: none; }
+.tab { display: inline-flex; align-items: center; gap: 6px; border: 1px solid transparent; border-bottom: 0; border-radius: 6px 6px 0 0; background: none; color: var(--muted); padding: 4px 12px; margin-bottom: -1px; cursor: pointer; font: inherit; font-size: 13px; }
+.tab:hover { color: inherit; }
+.tab.on { background: var(--bg); border-color: var(--border); color: inherit; font-weight: 600; }
+.tab[hidden] { display: none; }
+#tabBody { flex: 1; position: relative; display: flex; flex-direction: column; min-height: 0; }
+/* Trends and Double pulse cover the waveform plot, which keeps its size behind them. */
+#tabBody > section { position: absolute; inset: 0; z-index: 3; }
+#tabBody > section.bg { visibility: hidden; }
 #plotHost { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; }
 #plot { display: block; touch-action: none; }
 .status {
@@ -101,7 +125,7 @@ main { flex: 1; display: grid; grid-template-columns: var(--side-w, 300px) 1fr v
   background: var(--panel); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-.empty { position: absolute; inset: 0 0 26px 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+.empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
 .empty[hidden] { display: none; }
 .empty-box { text-align: center; padding: 34px 44px; border: 1px solid var(--border); border-radius: 14px; color: var(--muted); max-width: 440px; }
 .empty-box h2 { margin: 0 0 8px; color: var(--text); font-size: 18px; font-weight: 600; }
@@ -121,8 +145,9 @@ main { flex: 1; display: grid; grid-template-columns: var(--side-w, 300px) 1fr v
 .fhead { display: flex; align-items: center; gap: 6px; padding: 8px 8px 8px 10px; cursor: pointer; }
 .fhead:hover { background: var(--panel-2); }
 .caret { width: 12px; color: var(--muted); font-size: 10px; flex: none; }
-.fname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 550; }
-.fdir { display: block; font-weight: 400; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+/* File names and folders wrap so they are shown in full. */
+.fname { flex: 1; min-width: 0; overflow-wrap: anywhere; font-weight: 550; }
+.fdir { display: block; font-weight: 400; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
 .xbtn { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 4px; font-size: 15px; line-height: 1; }
 .xbtn:hover { color: var(--danger); }
 .fbody { padding: 0 12px 12px 28px; display: flex; flex-direction: column; gap: 8px; }
@@ -157,8 +182,19 @@ main { flex: 1; display: grid; grid-template-columns: var(--side-w, 300px) 1fr v
 #cursorBox .cb { color: var(--cursor-b); font-weight: 600; }
 #cursorBox .row { margin-top: 3px; }
 #cursorBox input { width: 120px; }
+#cursorBox .ctable { margin-top: 6px; overflow-x: auto; }
+#cursorBox .ctable:empty { display: none; }
+#cursorBox table { border-collapse: collapse; width: 100%; font-size: 11px; }
+#cursorBox th, #cursorBox td { padding: 2px 4px; text-align: right; white-space: nowrap; border-top: 1px solid var(--border); }
+#cursorBox th { color: var(--muted); font-weight: 600; border-top: 0; }
+#cursorBox td.cn { text-align: left; font-family: var(--sans); max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+#cursorBox td.cn i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
 
-.pane-h { padding: 10px 12px 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+.pane-h { display: flex; align-items: center; gap: 6px; padding: 10px 12px 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+.pane-h .pmove { margin-left: auto; display: inline-flex; gap: 2px; }
+.pane-h .pmove .xbtn { font-size: 10px; padding: 0 3px; }
+.pane-h .pmove .xbtn:hover { color: var(--accent); }
+.pane-h .pmove .xbtn:disabled { opacity: .3; cursor: default; color: var(--muted); }
 .trace { padding: 6px 10px 6px 12px; border-left: 3px solid transparent; cursor: pointer; }
 .trace:hover { background: var(--panel-2); }
 .trace.sel { background: var(--sel); border-left-color: var(--accent); }
@@ -168,17 +204,20 @@ main { flex: 1; display: grid; grid-template-columns: var(--side-w, 300px) 1fr v
 .swatch::-webkit-color-swatch-wrapper { padding: 0; }
 .swatch::-webkit-color-swatch { border: 1px solid var(--border); border-radius: 4px; }
 .swatch::-moz-color-swatch { border: 1px solid var(--border); border-radius: 4px; }
+.tline .creset { font-size: 13px; padding: 0 2px; margin-left: -4px; }
+.tline .creset:hover { color: var(--accent); }
+.tline .creset[hidden] { display: none; }
 .tname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tval { font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; }
-.tshift { display: flex; align-items: center; gap: 6px; margin: 4px 0 0 24px; font-size: 12px; color: var(--muted); }
+.tshift { display: none; align-items: center; gap: 6px; margin: 4px 0 0 24px; font-size: 12px; color: var(--muted); }
 .tshift input { width: 104px; font-family: var(--mono); font-size: 12px; }
 .tlevel { display: none; align-items: center; flex-wrap: wrap; gap: 4px; margin: 4px 0 0 24px; font-size: 12px; color: var(--muted); }
-.trace.sel .tlevel, .trace.lvl .tlevel { display: flex; }
+/* Shift and level controls show for the selected waveform, or once it was moved. */
+.trace.sel .tshift, .trace.moved .tshift, .trace.sel .tlevel, .trace.lvl .tlevel { display: flex; }
 .tlevel input { width: 62px; font-family: var(--mono); font-size: 12px; }
 .tlevel input.bad { outline: 2px solid var(--danger); }
 .tlevel select { max-width: 96px; font-size: 12px; padding: 1px 4px; }
 .trace.lvl .tlevel input { border-color: var(--accent); }
-.tcur { margin: 3px 0 0 24px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
 .eye { margin: 0; flex: none; }
 
 dialog { border: 1px solid var(--border); border-radius: 10px; background: var(--panel); color: var(--text); max-width: 640px; }
@@ -234,12 +273,16 @@ dialog td { padding: 4px 0; color: var(--muted); }
 #cdTable th [data-sort], #cdTable th[data-sort] { cursor: pointer; }
 #cdTable th.vary { color: var(--accent); }
 #cdTable td { font-family: var(--mono); }
-#cdTable td.cdfile { font-family: var(--sans); max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+#cdTable td.cdfile { font-family: var(--sans); max-width: var(--cdfile-w, 320px); overflow: hidden; text-overflow: ellipsis; }
+#cdTable th.cdfile, #cdTable td.cdfile { min-width: var(--cdfile-w, 0); }
+#cdTable th.cdfile { max-width: var(--cdfile-w, none); }
+#cdTable .colgrip { position: absolute; top: 0; right: -3px; bottom: 0; width: 7px; cursor: ew-resize; }
+#cdTable .colgrip:hover { background: linear-gradient(to right, transparent 2px, var(--accent) 2px, var(--accent) 4px, transparent 4px); }
 #cdTable th.cdfile, #cdTable td.cdfile { position: sticky; left: 0; background: var(--panel); }
 #cdTable th.cdfile { z-index: 2; background: var(--panel-2); }
 #cdTable tbody tr { cursor: pointer; }
 #cdTable tbody tr:hover td { background: var(--sel); }
-#cdTable .fdir { display: block; }
+#cdTable .fdir { display: block; overflow: hidden; text-overflow: ellipsis; }
 .cdname { display: flex; align-items: center; gap: 3px; font-weight: 400; font-size: 11px; color: var(--muted); cursor: pointer; margin-top: 2px; }
 .cdname input { margin: 0; }
 .cdok { color: #2e9d63; display: inline-block; width: 13px; text-align: center; }
@@ -255,9 +298,8 @@ dialog td { padding: 4px 0; color: var(--muted); }
 #condDlg .mnote { margin: 8px 0 12px; }
 
 /* ------------------------------------------------------------- frame trends */
-#trendPanel { flex: none; height: 42%; min-height: 160px; display: flex; flex-direction: column; background: var(--panel); border-top: 1px solid var(--border); position: relative; }
+#trendPanel { display: flex; flex-direction: column; background: var(--panel); }
 #trendPanel[hidden] { display: none; }
-#trendSplit { position: absolute; top: -4px; left: 0; right: 0; height: 8px; cursor: ns-resize; z-index: 1; }
 .trend-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 6px 10px; }
 .trend-bar input[type="text"] { width: 96px; font-family: var(--mono); font-size: 12px; }
 .trend-bar input.bad { outline: 2px solid var(--danger); }
@@ -272,10 +314,15 @@ dialog td { padding: 4px 0; color: var(--muted); }
 #trendList .chip { display: inline-flex; align-items: center; gap: 6px; }
 #trendList .chip.on .lbl, #trendList .chip.on .xbtn { color: var(--accent-text); }
 #trendList .xbtn { font-size: 13px; padding: 0; }
-.trend-body { flex: 1; display: flex; min-height: 0; border-top: 1px solid var(--border); }
+.trend-body { flex: none; height: var(--tr-body-h, 45%); min-height: 100px; display: flex; border-top: 1px solid var(--border); }
+/* The waveform plot moves here while the Trends tab is shown, to set the window with the cursors (see placePlot()). */
+#trendPlotSlot { flex: 1; min-height: 120px; display: flex; flex-direction: column; border-top: 1px solid var(--border); }
 #trendHost { flex: 1; min-width: 0; overflow-y: auto; overflow-x: hidden; }
 #trendPlot { display: block; }
 #trendTable { width: 300px; flex: none; overflow: auto; border-left: 1px solid var(--border); font-size: 12px; }
+/* Splitter between two panels inside a tab: it overlaps their shared border. */
+.isplit { flex: none; width: 8px; margin: 0 -4px; position: relative; z-index: 2; cursor: ew-resize; }
+.isplit:hover, .isplit.drag { background: linear-gradient(to right, transparent 3px, var(--accent) 3px, var(--accent) 5px, transparent 5px); }
 #trendTable table { border-collapse: collapse; width: 100%; }
 #trendTable th, #trendTable td { padding: 3px 8px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--border); }
 #trendTable th:first-child, #trendTable td:first-child { text-align: left; max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
@@ -285,9 +332,8 @@ dialog td { padding: 4px 0; color: var(--muted); }
 #trendTable .hint { padding: 8px 10px; }
 
 /* ------------------------------------------------------------- double pulse */
-#dpPanel { flex: none; height: 46%; min-height: 200px; display: flex; flex-direction: column; background: var(--panel); border-top: 1px solid var(--border); position: relative; }
+#dpPanel { display: flex; flex-direction: column; background: var(--panel); }
 #dpPanel[hidden] { display: none; }
-#dpPanel .psplit { position: absolute; top: -4px; left: 0; right: 0; height: 8px; cursor: ns-resize; z-index: 1; }
 #dpRun { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
 .dp-body { flex: 1; display: flex; min-height: 0; border-top: 1px solid var(--border); }
 #dpSetup { width: 330px; flex: none; overflow-y: auto; border-right: 1px solid var(--border); padding: 0 0 10px; font-size: 12px; }
@@ -325,15 +371,18 @@ dialog td { padding: 4px 0; color: var(--muted); }
 .dp-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 #dpView { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 12px; }
 #dpView:empty { display: none; }
+#dpResults .dptick { margin: 0 6px 0 0; vertical-align: -2px; }
 #dpView .who { font-weight: 600; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #dpView .chip { display: inline-flex; align-items: center; gap: 5px; }
-#dpView .chip i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
 #dpView .chip svg { flex: none; }
-#dpView .vfile { max-width: 260px; font-weight: 600; }
-#dpView .vfile .xbtn { font-size: 13px; padding: 0; }
-#dpView .chip.on .xbtn { color: var(--accent-text); }
 #dpView .warn { color: #c48a00; }
 #dpResults { flex: 1; overflow: auto; font-size: 12px; }
+/* While results are viewed, the waveform plot moves above the table (see placePlot()). */
+#dpPlotSlot { flex: 1; min-height: 120px; display: flex; flex-direction: column; }
+#dpPlotSlot[hidden], .hsplit[hidden] { display: none; }
+.hsplit { flex: none; height: 7px; cursor: ns-resize; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--panel-2); }
+.hsplit:hover, .hsplit.drag { background: var(--accent); }
+.dp-main.withplot #dpResults { flex: none; height: var(--dp-res-h, 40%); min-height: 60px; }
 #dpResults .hint { padding: 10px 12px; }
 #dpResults table { border-collapse: collapse; }
 #dpResults th, #dpResults td { padding: 3px 8px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--border); }
@@ -359,6 +408,7 @@ dialog td { padding: 4px 0; color: var(--muted); }
   #sideSplit { left: calc(var(--side-w, 260px) - 4px); bottom: 220px; }
   #traceSplit { display: none; }
   #tracePanel { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--border); }
+  main.trace-off #tracePanel { visibility: visible; overflow-y: auto; border-top: 1px solid var(--border); }   /* no splitter here to bring it back */
 }
 @media (max-width: 700px) {
   body { overflow: auto; }
@@ -367,7 +417,7 @@ dialog td { padding: 4px 0; color: var(--muted); }
   .vsplit { display: none; }
   #plotWrap { height: 70vh; flex: none; }
   .group.end { margin-left: 0; }
-  #trendTable { display: none; }
+  #trendTable, .isplit { display: none; }
   .dp-body { flex-direction: column; }
-  #dpSetup { width: auto; max-height: 45%; border-right: 0; border-bottom: 1px solid var(--border); }
+  #dpSetup { width: auto !important; max-height: 45%; border-right: 0; border-bottom: 1px solid var(--border); }
 }
