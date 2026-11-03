@@ -107,26 +107,37 @@ If the repository is private, Pages availability depends on your GitHub plan.
 - **Test conditions** from a `.json` file saved next to each capture:
   - A JSON file belongs to a capture in the same folder when the names match (`run1.tss` + `run1.json`),
     or match after a leading prefix of letters is dropped (`Tek20261007T114340.tss` + `Cfg20261007T114340.json`).
-  - Each file's conditions are listed in its card. Conditions that differ between the listed files
-    are highlighted and also shown under the file name.
+  - Each file's conditions are listed in its card, folded until you click *Test conditions*. Conditions that
+    differ between the listed files are highlighted and also shown under the file name.
   - *Conditions* opens the file picker: every capture (loaded or not) against its conditions.
     Pick a value under a condition to show only those files; each box lists the values left by the
-    other filters, with how many files have each. Click a condition's name to sort by it.
+    other filters, with how many files have each. Click a condition's name to sort by it. Drag the right edge of the
+    *File* column header to widen it (double-click to reset).
     Tick rows (or the header box for every file shown) and click *Load*.
-  - Mark *name* under some conditions and click *Name files from marked* to name the files after
+  - Mark *name* under some conditions and click *Display names from conditions* to label the files with
     them (e.g. `high_voltage=600 · period_ms=100`) in legends and trends.
   - Closing a file puts it back among the picker's candidates.
   - The file filter also searches the conditions, e.g. `high_voltage 600`.
-- **Channels:** toggle them per file, or across every file with *Channels in all files*.
+- **Channels:** toggle them per file, or with the chips at the top of the Files panel (*Channels*, or *Channels in all files* when several are loaded).
 - **Frames (FastFrame):** type `1-5, 8` or click the frame buttons. Alt+click selects one frame only.
-- **Panes:** one per channel (overlays the same signal from every file), one per file, one per frame, or a single pane.
+- **Sampling rate:** a file's *Rate* box (in its card) shows its rate; type another (e.g. `1G`, `250M`) to
+  resample every channel of that file onto that rate by linear interpolation, over the same time span.
+  Cursors, math, trends and double-pulse values then use the resampled points. *Original* sets it back.
+  Going below the original rate does not filter first, so fast edges can be missed.
+- **Panes:** one per channel, overlaying the same signal from every file. Reorder them with ▲/▼ on the pane names in the *Waveforms* list (right); the order is remembered.
+- **Reset:** undoes every time shift, level move, scale and overlay, and fits all waveforms.
+- **Panels:** drag a panel's inner edge to resize it (double-click resets). The small ‹ / › button on that edge
+  hides the panel completely, and shows it again; this works for the Files and Waveforms panels and for the side
+  panels inside the Trends and Double pulse tabs, and is remembered.
 - **Time shift:**
   - Drag a waveform left or right. *Dragging moves* sets whether the whole file moves (the default) or only that waveform.
-  - Or type a shift in the waveform's Δt box or the file's *Shift* box: `12.5n`, `-3 us`, `1e-9`, `40 samples`.
+  - Or select the waveform in the *Waveforms* list (right) and type its shift in the Δt box: `12.5n`, `-3 us`, `1e-9`, `40 samples`.
+    In *Whole file* mode this moves every waveform of the file with it. The box shows for the selected waveform and any
+    shifted one; its *0* zeroes the waveform's and its file's shift.
   - ←/→ nudges the selected waveform by 1 sample (Shift: 10 samples, Alt: 1 pixel).
 - **Overlay, level and scale** (display only: readouts, cursors, math, trends and double-pulse values use the real values):
   - Select a waveform (click it or its row on the right). Its row shows the level controls.
-  - **Overlay on another channel's pane** (*Panes: One per channel*): pick *In Vd* (or another channel) to draw
+  - **Overlay on another channel's pane:** pick *In Vd* (or another channel) to draw
     it in that pane, scaled to fit. Example: make a math channel `diff(Is)` (or `smooth(diff(Is), 1n)`), select it
     and pick *In Vd* to compare dI/dt with the Vd edge. The pane keeps Vd's axis and unit, and its title lists
     the overlaid channels.
@@ -146,9 +157,11 @@ If the repository is private, Pages availability depends on your GitHub plan.
   - A definition applies to every loaded file that has its input channels, and is remembered between sessions.
   - Units are inferred (V×A → W, ∫W dt → J, A/s, Ω).
   - Inputs use their own Δt shifts, so deskewing an input also updates the result.
-- **Frame trends** (*Trends* or `T`): measure a channel in a time window on every FastFrame frame and plot the result against frame number or trigger time.
+- **Frame trends** (*Trends* tab, or `T`): measure a channel in a time window on every FastFrame frame and plot the result against frame number or trigger time.
   - Measurements: mean, integral, RMS, min, max, peak-peak, or the value at one time. Math channels work too, e.g. the integral of `Vd*Is` for energy per pulse.
-  - Type the window (`200n` to `500n`) or click *From cursors*. The window is in displayed time, so a waveform's Δt shift moves it relative to the window; the window being edited is shaded on the plot.
+  - The waveform plot is shown above the trends: press `C` (or *Cursors*) and drag cursors A/B there, then click
+    *From cursors*. Drag the bar between the plot and the trends to share the height.
+  - Type the window (`200n` to `500n`) or click *From cursors*. The window is in displayed time, so a waveform's Δt shift moves it relative to the window; the selected measurement's window is shaded in the *Waveforms* tab.
   - Every loaded file with that channel gets its own line. Hover to read one frame's values in the table; click a point to show that frame (Shift+click adds it).
   - *CSV* saves every value of every plotted file (loaded or measured without loading) in one
     `tss-trends.csv`, one row per file and frame. Columns: `file path` (the folder, relative to the
@@ -158,11 +171,11 @@ If the repository is private, Pages availability depends on your GitHub plan.
     Measurements are remembered between sessions.
   - **Apply the same measurements to many files** without loading them: define the measurements
     (e.g. on one loaded file), then click *Measure files…* (or *Conditions*), filter and tick the
-    files, and click *Measure ticked*. Each file is opened, measured on every frame and released,
+    files, and click *Measure ticked (Trends)*. Each file is opened, measured on every frame and released,
     so a whole folder fits in memory. The results are plotted with the loaded files; click a point
     to load that file at that frame. These files have no time shifts. After adding or changing a
     measurement, click *Measure again*.
-- **Double pulse** (*Double pulse* or `D`): extract double-pulse switching parameters with the
+- **Double pulse** (*Double pulse* tab, or `D`; clicking a result shows its waveforms and extraction marks above the results table): extract double-pulse switching parameters with the
   config-free `dpa` algorithm, version 3.5 (ported from `double-pulse-analytics/dpa/analysis.py`, same results).
   1. **Captures:** tick the double-pulse files among the listed files. A file is ticked when first listed if it
      has a Vd channel. Files that are not loaded are opened just for the extraction.
@@ -190,26 +203,27 @@ If the repository is private, Pages availability depends on your GitHub plan.
        (e.g. `dV/dt_on_90_10`) whatever the levels. The CSV header lists every threshold used, with `*` on the
        changed ones. When the thresholds change after an extraction, the panel says *Thresholds changed: Extract again*.
   4. **Extract:** one result row per file (and per frame for FastFrame captures, or only the frames shown).
-     The last row, *Average*, is the mean of each column over the results that have a value in it (hover a value for the count).
+     Tick *Average* (next to *Download CSV*) to add an *Average* row: the mean of each column over the results that have a value in it (hover a value for the count). It is off by default.
      The Δt shifts of loaded waveforms are applied, so you can deskew Is against Vd before extracting.
      A value that cannot be extracted is left empty and the *Issues* column says why.
-  5. **View extraction windows:** click a result row to show that capture alone. It first shows the whole
-     record with no marks. Click a parameter's chip to show its marks: every threshold crossing as a dashed line and
-     a dot on its waveform, and the Eon/Eoff/Qg integration windows shaded with their values. *Turn-off* / *Turn-on*
-     zoom to the hard switching events. The chips and zoom you pick stay for the next rows you click, until the
-     next extraction.
-     - **Overlay files:** Ctrl+click (or Shift+click) more rows to add them; Ctrl+click a shown row again, or the
-       × on its file chip, to remove it. In an overlay, marks take their waveform's colour and the parameters are
-       told apart by dash pattern (see the *Show* chips). Only one file's marks are labelled: the last one added,
-       or click a file chip to label that file instead.
+  5. **View extraction windows:** tick a result (the box in front of its row, or click the row) to show its file's
+     waveforms with its marks above the table; untick it to take it away. The channels and frames chosen in the
+     *Waveforms* tab are used; the result's own frame and channels are added if they were not shown (and taken away
+     again when it is unticked). Other files are hidden in the Double pulse tab only. The table lists the parameters;
+     the test conditions (Vdc, Ioff, Ion) are in the CSV. It first shows the whole record with no marks. Click a parameter's chip to show its marks: every threshold crossing as a dashed line and
+     a dot on its waveform, and the Eon/Eoff/Qg integration windows shaded with their values. Zoom with the mouse
+     as in the Waveforms tab. The chips you pick stay for the next rows you click, until the next extraction.
+     - **Overlay files:** tick more rows to add them; untick a row to remove it. In an overlay, marks take their
+       waveform's colour and the parameters are told apart by dash pattern (see the *Show* chips). Only the last
+       ticked row's marks are labelled.
      - **Move waveforms:** drag a waveform (or nudge it with ←/→) to compare edges. Its marks move with it.
-       In *Whole file* mode, or with the file's *Shift* box, every mark of the file moves. When waveforms of a file
+       In *Whole file* mode every mark of the file moves. When waveforms of a file
        move relative to each other, e.g. Is against Vd, the values no longer match the plot and
        *Moved since extraction* appears. Click *Extract* again to get values for the new deskew.
   6. **Download CSV:** `double-pulse-parameters.csv` has one row per file and frame, with the same `#` header
      lines as the dpa batch CSV, the test conditions, Vdc/Ioff/Ion, every parameter, the channels used,
-     time shifts and errors, and an *Average* row at the end.
-- **Measure:** `C` shows cursors A/B with Δt and each waveform's values at A and B. The legend shows each waveform's value at the mouse.
+     time shifts and errors, and an *Average* row at the end when *Average* is ticked.
+- **Measure:** `C` shows cursors A/B. The box at the top right has their times, Δt and 1/Δt, and a table of every shown waveform: its value at A and at B, Δ = B − A and the slope Δ/Δt. The legend shows each waveform's value at the mouse.
 - *PNG* saves the plot; *Scope screenshot* opens the screenshot stored in the capture.
 
 ## Code
