@@ -223,9 +223,10 @@ edit the files and reload the page. Load order is set in `index.html`.
 | `js/wfm.js` | WFM v3 parser, ported from `DynamicAnalytic/dpa/tekwfm.py` (incl. FastFrame trigger times) |
 | `js/tss.js` | `.tss` reader: channel labels from the nested `.set`, corrections, lazy channel decode |
 | `js/cond.js` | Test-condition `.json` files: parsing, pairing with captures, finding conditions that differ |
+| `js/units.js` | SI-prefix formatting and parsing (`12.5n`, `3 us`), axis ticks |
 | `js/series.js` | One frame of one channel, with a min/max pyramid for fast drawing of long records |
 | `js/math.js` | Math expression parser and vectorised evaluator (integ, diff, smooth, …) with unit inference |
 | `js/trend.js` | Frame trends: per-frame window measurements (mean, integral, …) and their chart |
 | `js/dpa.js` | Double-pulse parameter extraction, a port of `double-pulse-analytics/dpa/analysis.py` (v3.5) |
-| `js/plot.js` | Canvas plot: stacked panes, zoom/pan, drag-to-shift, cursors, extraction marks |
-| `js/app.js` | UI: files, channels, frames, waveform list, shifts |
+| `js/plot.js` | Canvas plot: stacked panes, zoom/pan, drag to shift in time or level, waveform scale, cursors, extraction marks |
+| `js/app.js` | UI: files, channels, frames, waveform list, shifts and overlays, math, frame trends, double pulse panel |
